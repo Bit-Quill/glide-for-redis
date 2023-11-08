@@ -4,8 +4,10 @@ use babushka::connection_request::AddressInfo;
 use redis::{Cmd, FromRedisValue, RedisResult};
 use std::{
     ffi::{c_void, CStr, CString},
-    os::raw::c_char,
+    os::raw::{c_char,c_longlong},
+    time::{SystemTime, UNIX_EPOCH},
 };
+
 use tokio::runtime::Builder;
 use tokio::runtime::Runtime;
 
@@ -19,7 +21,7 @@ pub enum Level {
 
 pub struct Connection {
     connection: BabushkaClient,
-    success_callback: unsafe extern "C" fn(usize, *const c_char, usize) -> (),
+    success_callback: unsafe extern "C" fn(usize, *const c_char, usize, c_longlong, c_longlong) -> (),
     failure_callback: unsafe extern "C" fn(usize) -> (), // TODO - add specific error codes
     runtime: Runtime,
 }
@@ -52,7 +54,7 @@ fn create_connection_internal(
     port: u32,
     use_tls: bool,
     use_cluster_mode: bool,
-    success_callback: unsafe extern "C" fn(usize, *const c_char, usize) -> (),
+    success_callback: unsafe extern "C" fn(usize, *const c_char, usize, c_longlong, c_longlong) -> (),
     failure_callback: unsafe extern "C" fn(usize) -> (),
 ) -> RedisResult<Connection> {
     let host_cstring = unsafe { CStr::from_ptr(host as *mut c_char) };
@@ -79,7 +81,7 @@ pub extern "C" fn create_connection(
     port: u32,
     use_tls: bool,
     use_cluster_mode: bool,
-    success_callback: unsafe extern "C" fn(usize, *const c_char, usize) -> (),
+    success_callback: unsafe extern "C" fn(usize, *const c_char, usize, c_longlong, c_longlong) -> (),
     failure_callback: unsafe extern "C" fn(usize) -> (),
 ) -> *const c_void {
     match create_connection_internal(host, port, use_tls, use_cluster_mode, success_callback, failure_callback) {
@@ -120,7 +122,7 @@ pub extern "C" fn set(
         unsafe {
             let client = Box::leak(Box::from_raw(ptr_address as *mut Connection));
             match result {
-                Ok(_) => (client.success_callback)(callback_index, std::ptr::null(), channel),
+                Ok(_) => (client.success_callback)(callback_index, std::ptr::null(), channel, 0, 0),
                 Err(_) => (client.failure_callback)(callback_index), // TODO - report errors
             };
         }
@@ -130,7 +132,8 @@ pub extern "C" fn set(
 /// Expects that key will be kept valid until the callback is called. If the callback is called with a string pointer, the pointer must
 /// be used synchronously, because the string will be dropped after the callback.
 #[no_mangle]
-pub extern "C" fn get(connection_ptr: *const c_void, callback_index: usize, key: *const c_char, channel: usize) {
+pub extern "C" fn get(connection_ptr: *const c_void, callback_index: usize, key: *const c_char, channel: usize) -> c_longlong {
+    let rust_op_start = get_time_in_nanos();
     let connection = unsafe { Box::leak(Box::from_raw(connection_ptr as *mut Connection)) };
     // The safety of this needs to be ensured by the calling code. Cannot dispose of the pointer before all operations have completed.
     let ptr_address = connection_ptr as usize;
@@ -153,13 +156,15 @@ pub extern "C" fn get(connection_ptr: *const c_void, callback_index: usize, key:
         let result = Option::<CString>::from_redis_value(&value);
 
         unsafe {
+            let rust_op_end = get_time_in_nanos();
             match result {
-                Ok(None) => (connection.success_callback)(callback_index, std::ptr::null(), channel),
-                Ok(Some(c_str)) => (connection.success_callback)(callback_index, c_str.as_ptr(), channel),
+                Ok(None) => (connection.success_callback)(callback_index, std::ptr::null(), channel, rust_op_start, rust_op_end),
+                Ok(Some(c_str)) => (connection.success_callback)(callback_index, c_str.as_ptr(), channel, rust_op_start, rust_op_end),
                 Err(_) => (connection.failure_callback)(callback_index), // TODO - report errors
             };
         }
     });
+    return rust_op_start;
 }
 
 impl From<logger_core::Level> for Level {
@@ -227,5 +232,12 @@ pub unsafe extern "C" fn init(level: Option<Level>, file_name: *const c_char) ->
 
         let logger_level = logger_core::init(level.map(|level| level.into()), file_name_as_str);
         logger_level.into()
+    }
+}
+
+fn get_time_in_nanos() -> c_longlong {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_nanos() as c_longlong,
+        Err(_) => -1, // A negative value indicates an error, such as a time before the UNIX epoch.
     }
 }

@@ -1,10 +1,10 @@
 package asyncClientRawFFI
 
 /*
-#cgo LDFLAGS: -L./target/debug -lgorustffi
+#cgo LDFLAGS: -L./target/release -lgorustffi
 #include "lib.h"
 
-void successCallback(uintptr_t id , char *cstr1, uintptr_t channelPtr);
+void successCallback(uintptr_t id , char *cstr1, uintptr_t channelPtr, long long rustOpStart, long long rustOpEnd);
 void failureCallback(uintptr_t id);
 */
 import "C"
@@ -12,20 +12,47 @@ import "C"
 import (
 	"fmt"
 	"github.com/aws/babushka/go/benchmarks"
+	"sync"
+	"time"
 	"unsafe"
 )
 
 // TODO proper error handling for all functions
 type AsyncRedisClient struct {
-	coreClient unsafe.Pointer
+	coreClient   unsafe.Pointer
+	timingValues SafeSlice
+}
+
+type Timing struct {
+	t_go_rust_get      int64
+	t_rustop           int64
+	t_rust_go_callback int64
+	t_go_callback_wait int64
+	message            string
+}
+
+type SafeSlice struct {
+	slice []Timing
+	mu    sync.Mutex
+}
+
+func (s *SafeSlice) Append(value Timing) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.slice = append(s.slice, value)
 }
 
 //export successCallback
-func successCallback(connectionID C.uintptr_t, message *C.char, channelPtr C.uintptr_t) {
-	goMessage := C.GoString(message)
+func successCallback(connectionID C.uintptr_t, message *C.char, channelPtr C.uintptr_t, rustOpStart C.longlong, rustOpEnd C.longlong) {
+	startCallback := time.Now().UnixNano()
+	res := Timing{}
+	res.message = C.GoString(message)
+	res.t_rustop = int64(rustOpEnd - rustOpStart)
+	res.t_rust_go_callback = startCallback - int64(rustOpEnd)
+	res.t_go_callback_wait = startCallback
 	returnedAddress := uintptr(channelPtr)
-	channel := *(*chan string)(unsafe.Pointer(returnedAddress))
-	channel <- goMessage
+	channel := *(*chan Timing)(unsafe.Pointer(returnedAddress))
+	channel <- res
 }
 
 //export failureCallback
@@ -62,23 +89,55 @@ func (asyncRedisClient *AsyncRedisClient) Set(key string, value interface{}) err
 }
 
 func (asyncRedisClient *AsyncRedisClient) Get(key string) (string, error) {
+	goTimeNanos := time.Now().UnixNano()
 	ckey := C.CString(key)
 	defer C.free(unsafe.Pointer(ckey))
 
-	result := make(chan string)
+	result := make(chan Timing)
 	chAddress := uintptr(unsafe.Pointer(&result)) //Gives you the raw memory address of the result variable as an integer.
 
-	C.get(asyncRedisClient.coreClient, C.uintptr_t(1), ckey, C.uintptr_t(chAddress))
+	rustStartGet := C.get(asyncRedisClient.coreClient, C.uintptr_t(1), ckey, C.uintptr_t(chAddress))
 	value := <-result
-
-	return value, nil
+	value.t_go_callback_wait = time.Now().UnixNano() - value.t_go_callback_wait
+	value.t_go_rust_get = int64(rustStartGet) - goTimeNanos
+	asyncRedisClient.timingValues.Append(value)
+	return value.message, nil
 }
 
 func (asyncRedisClient *AsyncRedisClient) CloseConnection() error {
 	C.close_connection(asyncRedisClient.coreClient)
+	asyncRedisClient.calculateAndPrintAverages()
 	return nil
 }
 
 func (asyncRedisClient *AsyncRedisClient) GetName() string {
 	return "babushka"
+}
+
+func (asyncRedisClient *AsyncRedisClient) calculateAndPrintAverages() {
+	var sumGoRustGet, sumRustOp, sumRustGoCallback, sumGoCallbackWait int64
+	count := len(asyncRedisClient.timingValues.slice)
+
+	for _, t := range asyncRedisClient.timingValues.slice {
+		sumGoRustGet += t.t_go_rust_get
+		sumRustOp += t.t_rustop
+		sumRustGoCallback += t.t_rust_go_callback
+		sumGoCallbackWait += t.t_go_callback_wait
+	}
+
+	if count > 0 {
+		// Calculate averages
+		avgGoRustGet := float64(sumGoRustGet) / float64(count)
+		avgRustOp := float64(sumRustOp) / float64(count)
+		avgRustGoCallback := float64(sumRustGoCallback) / float64(count)
+		avgGoCallbackWait := float64(sumGoCallbackWait) / float64(count)
+
+		// Print averages
+		fmt.Printf("Average time between the start of go get call and rust get call: %v\n", avgGoRustGet/1e6)
+		fmt.Printf("Average time for the rust operation (start of get call and right before callback): %v\n", avgRustOp/1e6)
+		fmt.Printf("Average time between rust calling the callback and the start of the go callback: %v\n", avgRustGoCallback/1e6)
+		fmt.Printf("Average time between the start of the gocallback and the get call receiving the value from the channel: %v\n", avgGoCallbackWait/1e6)
+	} else {
+		fmt.Println("No timings data available to calculate averages.")
+	}
 }

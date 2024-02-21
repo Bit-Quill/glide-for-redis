@@ -1389,6 +1389,170 @@ export function runBaseTests<Context>(config: {
         },
         config.timeout
     );
+
+    it.each([ProtocolVersion.RESP2, ProtocolVersion.RESP3])(
+        `zscore test_%p`,
+        async (protocol) => {
+            await runTest(async (client: BaseClient) => {
+                const key1 = uuidv4();
+                const key2 = uuidv4();
+                const membersScores = { one: 1, two: 2, three: 3 };
+                expect(await client.zadd(key1, membersScores)).toEqual(3);
+                expect(await client.zscore(key1, "one")).toEqual(1.0);
+                expect(await client.zscore(key1, "nonExistingMember")).toEqual(
+                    null
+                );
+                expect(
+                    await client.zscore("nonExistingKey", "nonExistingMember")
+                ).toEqual(null);
+
+                expect(await client.set(key2, "foo")).toEqual("OK");
+                await expect(client.zscore(key2, "foo")).rejects.toThrow();
+            }, protocol);
+        },
+        config.timeout
+    );
+
+    it.each([ProtocolVersion.RESP2, ProtocolVersion.RESP3])(
+        `zcount test_%p`,
+        async (protocol) => {
+            await runTest(async (client: BaseClient) => {
+                const key1 = uuidv4();
+                const key2 = uuidv4();
+                const membersScores = { one: 1, two: 2, three: 3 };
+                expect(await client.zadd(key1, membersScores)).toEqual(3);
+                expect(
+                    await client.zcount(
+                        key1,
+                        "negativeInfinity",
+                        "positiveInfinity"
+                    )
+                ).toEqual(3);
+                expect(
+                    await client.zcount(
+                        key1,
+                        { bound: 1, isInclusive: false },
+                        { bound: 3, isInclusive: false }
+                    )
+                ).toEqual(1);
+                expect(
+                    await client.zcount(
+                        key1,
+                        { bound: 1, isInclusive: false },
+                        { bound: 3 }
+                    )
+                ).toEqual(2);
+                expect(
+                    await client.zcount(key1, "negativeInfinity", {
+                        bound: 3,
+                    })
+                ).toEqual(3);
+                expect(
+                    await client.zcount(key1, "positiveInfinity", {
+                        bound: 3,
+                    })
+                ).toEqual(0);
+                expect(
+                    await client.zcount(
+                        "nonExistingKey",
+                        "negativeInfinity",
+                        "positiveInfinity"
+                    )
+                ).toEqual(0);
+                
+                expect(await client.set(key2, "foo")).toEqual("OK");
+                await expect(
+                    client.zcount(key2, "negativeInfinity", "positiveInfinity")
+                ).rejects.toThrow();
+            }, protocol);
+        },
+        config.timeout
+    );
+
+    it.each([ProtocolVersion.RESP2, ProtocolVersion.RESP3])(
+        `type test_%p`,
+        async (protocol) => {
+            await runTest(async (client: BaseClient) => {
+                const key = uuidv4();
+                expect(await client.set(key, "value")).toEqual("OK");
+                expect(await client.type(key)).toEqual("string");
+                expect(await client.del([key])).toEqual(1);
+
+                expect(await client.lpush(key, ["value"])).toEqual(1);
+                expect(await client.type(key)).toEqual("list");
+                expect(await client.del([key])).toEqual(1);
+
+                expect(await client.sadd(key, ["value"])).toEqual(1);
+                expect(await client.type(key)).toEqual("set");
+                expect(await client.del([key])).toEqual(1);
+
+                expect(await client.zadd(key, { member: 1.0 })).toEqual(1);
+                expect(await client.type(key)).toEqual("zset");
+                expect(await client.del([key])).toEqual(1);
+
+                expect(await client.hset(key, { field: "value" })).toEqual(1);
+                expect(await client.type(key)).toEqual("hash");
+                expect(await client.del([key])).toEqual(1);
+
+                await client.customCommand([
+                    "XADD",
+                    key,
+                    "*",
+                    "field",
+                    "value",
+                ]);
+                expect(await client.type(key)).toEqual("stream");
+                expect(await client.del([key])).toEqual(1);
+
+                expect(await client.type(key)).toEqual("none");
+            }, protocol);
+        },
+        config.timeout
+    );
+
+    it.each([ProtocolVersion.RESP2, ProtocolVersion.RESP3])(
+        `strlen test_%p`,
+        async (protocol) => {
+            await runTest(async (client: BaseClient) => {
+                const key1 = uuidv4();
+                const key1Value = uuidv4();
+                const key1ValueLength = key1Value.length;
+                expect(await client.set(key1, key1Value)).toEqual("OK");
+                expect(await client.strlen(key1)).toEqual(key1ValueLength);
+
+                expect(await client.strlen("nonExistKey")).toEqual(0);
+
+                const listName = "myList";
+                const listKey1Value = uuidv4();
+                const listKey2Value = uuidv4();
+
+                expect(
+                    await client.lpush(listName, [listKey1Value, listKey2Value])
+                ).toEqual(2);
+                // An error is returned when key holds a non-string value
+                await expect(client.strlen(listName)).rejects.toThrow();
+            }, protocol);
+        },
+        config.timeout
+    );
+    it.each([ProtocolVersion.RESP2, ProtocolVersion.RESP3])(
+        `lindex test_%p`,
+        async (protocol) => {
+            await runTest(async (client: BaseClient) => {
+                const listName = uuidv4();
+                const listKey1Value = uuidv4();
+                const listKey2Value = uuidv4();
+                expect(
+                    await client.lpush(listName, [listKey1Value, listKey2Value])
+                ).toEqual(2);
+                expect(await client.lindex(listName, 0)).toEqual(listKey2Value);
+                expect(await client.lindex(listName, 1)).toEqual(listKey1Value);
+                expect(await client.lindex("notExsitingList", 1)).toEqual(null);
+                expect(await client.lindex(listName, 3)).toEqual(null);
+            }, protocol);
+        },
+        config.timeout
+    );
 }
 
 export function runCommonTests<Context>(config: {

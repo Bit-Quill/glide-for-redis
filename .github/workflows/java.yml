@@ -15,11 +15,6 @@ on:
             - "java/**"
             - ".github/workflows/java.yml"
 
-# Run only most latest job on a branch and cancel previous ones
-concurrency:
-    group: ${{ github.head_ref || github.ref }}
-    cancel-in-progress: true
-
 jobs:
     build-and-test-java-client:
         timeout-minutes: 25
@@ -67,6 +62,10 @@ jobs:
             - name: Build java client
               working-directory: java
               run: ./gradlew --continue build
+
+            - name: Ensure no skipped files by linter
+              working-directory: java
+              run: ./gradlew spotlessDiagnose | grep 'All formatters are well behaved for all files'
 
             - name: Upload test reports
               if: always()

@@ -5,6 +5,7 @@
 import {
     ExpireOptions,
     InfoOptions,
+    ScoreLimit,
     SetOptions,
     ZaddOptions,
     createClientGetName,
@@ -52,11 +53,16 @@ import {
     createSRem,
     createSelect,
     createSet,
+    createStrlen,
     createTTL,
+    createType,
     createUnlink,
     createZadd,
     createZcard,
+    createZcount,
     createZrem,
+    createZscore,
+    createLindex,
 } from "./Commands";
 import { redis_request } from "./ProtobufMessage";
 
@@ -107,7 +113,7 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      * @param options - The set options.
      *
      * Command Response - If the value is successfully set, return OK.
-     * If value isn't set because of `onlyIfExists` or `onlyIfDoesNotExist` conditions, return null.
+     * If `value` isn't set because of `onlyIfExists` or `onlyIfDoesNotExist` conditions, return null.
      * If `returnOldValue` is set, return the old value as a string.
      */
     public set(key: string, value: string, options?: SetOptions): T {
@@ -117,12 +123,14 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
     /** Ping the Redis server.
      * See https://redis.io/commands/ping/ for details.
      *
-     * @param str - the ping argument that will be returned.
+     * @param message - An optional message to include in the PING command. 
+     * If not provided, the server will respond with "PONG".
+     * If provided, the server will respond with a copy of the message.
      *
-     * Command Response - PONG if no argument is provided, otherwise return a copy of the argument.
+     * Command Response - "PONG" if `message` is not provided, otherwise return a copy of `message`.
      */
-    public ping(str?: string): T {
-        return this.addAndReturn(createPing(str));
+    public ping(message?: string): T {
+        return this.addAndReturn(createPing(message));
     }
 
     /** Get information and statistics about the Redis server.
@@ -148,7 +156,7 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
         return this.addAndReturn(createDel(keys));
     }
 
-    /** Get the name of the current connection.
+    /** Get the name of the connection on which the transaction is being executed.
      * See https://redis.io/commands/client-getname/ for more details.
      *
      * Command Response - the name of the client connection as a string if a name is set, or null if no name is assigned.
@@ -160,7 +168,7 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
     /** Rewrite the configuration file with the current configuration.
      * See https://redis.io/commands/select/ for details.
      *
-     * Command Response - "OK" when the configuration was rewritten properly, Otherwise an error is raised.
+     * Command Response - "OK" when the configuration was rewritten properly. Otherwise, the transaction fails with an error.
      */
     public configRewrite(): T {
         return this.addAndReturn(createConfigRewrite());
@@ -169,7 +177,7 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
     /** Resets the statistics reported by Redis using the INFO and LATENCY HISTOGRAM commands.
      * See https://redis.io/commands/config-resetstat/ for details.
      *
-     * Command Response - always "OK"
+     * Command Response - always "OK".
      */
     public configResetStat(): T {
         return this.addAndReturn(createConfigResetStat());
@@ -203,8 +211,7 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      *
      * @param key - The key to increment its value.
      *
-     * Command Response - the value of `key` after the increment, An error is raised if `key` contains a value
-     * of the wrong type or contains a string that can not be represented as integer.
+     * Command Response - the value of `key` after the increment.
      */
     public incr(key: string): T {
         return this.addAndReturn(createIncr(key));
@@ -216,8 +223,7 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      * @param key - The key to increment its value.
      * @param amount - The amount to increment.
      *
-     * Command Response - the value of `key` after the increment, An error is raised if `key` contains a value
-     * of the wrong type or contains a string that can not be represented as integer.
+     * Command Response - the value of `key` after the increment.
      */
     public incrBy(key: string, amount: number): T {
         return this.addAndReturn(createIncrBy(key, amount));
@@ -232,8 +238,6 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      * @param amount - The amount to increment.
      *
      * Command Response - the value of `key` after the increment.
-     * An error is raised if `key` contains a value of the wrong type,
-     * or the current key content is not parsable as a double precision floating point number.
      *
      */
     public incrByFloat(key: string, amount: number): T {
@@ -254,8 +258,7 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      *
      * @param key - The key to decrement its value.
      *
-     * Command Response - the value of `key` after the decrement. An error is raised if `key` contains a value
-     * of the wrong type or contains a string that can not be represented as integer.
+     * Command Response - the value of `key` after the decrement.
      */
     public decr(key: string): T {
         return this.addAndReturn(createDecr(key));
@@ -267,8 +270,7 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      * @param key - The key to decrement its value.
      * @param amount - The amount to decrement.
      *
-     * Command Response - the value of `key` after the decrement. An error is raised if `key` contains a value
-     * of the wrong type or contains a string that can not be represented as integer.
+     * Command Response - the value of `key` after the decrement.
      */
     public decrBy(key: string, amount: number): T {
         return this.addAndReturn(createDecrBy(key, amount));
@@ -291,7 +293,7 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      *
      * @param parameters - A List of keyValuePairs consisting of configuration parameters and their respective values to set.
      *
-     * Command Response - "OK" when the configuration was set properly. Otherwise an error is raised.
+     * Command Response - "OK" when the configuration was set properly. Otherwise, the transaction fails with an error.
      *
      * @example
      * config_set([("timeout", "1000")], [("maxmemory", "1GB")]) - Returns OK
@@ -335,7 +337,6 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      *
      * Command Response - the number of fields that were removed from the hash, not including specified but non existing fields.
      * If `key` does not exist, it is treated as an empty hash and it returns 0.
-     * If `key` holds a value that is not a hash, an error is raised.
      */
     public hdel(key: string, fields: string[]): T {
         return this.addAndReturn(createHDel(key, fields));
@@ -375,7 +376,6 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      *
      * Command Response - a map of fields and their values stored in the hash. Every field name in the map is followed by its value.
      * If `key` does not exist, it returns an empty map.
-     * If `key` holds a value that is not a hash, an error is raised.
      */
     public hgetall(key: string): T {
         return this.addAndReturn(createHGetAll(key));
@@ -391,8 +391,6 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      * @param field - The field in the hash stored at `key` to increment its value.
      *
      * Command Response - the value of `field` in the hash stored at `key` after the increment.
-     *  An error will be raised if `key` holds a value of an incorrect type (not a string)
-     *  or if it contains a string that cannot be represented as an integer.
      */
     public hincrBy(key: string, field: string, amount: number): T {
         return this.addAndReturn(createHIncrBy(key, field, amount));
@@ -408,9 +406,6 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      * @param field - The field in the hash stored at `key` to increment its value.
      *
      * Command Response - the value of `field` in the hash stored at `key` after the increment.
-     *  An error is raised if `key` contains a value of the wrong type
-     *  or the current field content is not parsable as a double precision floating point number.
-     *
      */
     public hincrByFloat(key: string, field: string, amount: number): T {
         return this.addAndReturn(createHIncrByFloat(key, field, amount));
@@ -425,7 +420,6 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      * @param elements - The elements to insert at the head of the list stored at `key`.
      *
      * Command Response - the length of the list after the push operations.
-     * If `key` holds a value that is not a list, an error is raised.
      */
     public lpush(key: string, elements: string[]): T {
         return this.addAndReturn(createLPush(key, elements));
@@ -436,9 +430,9 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      * See https://redis.io/commands/lpop/ for details.
      *
      * @param key - The key of the list.
+     * 
      * Command Response - The value of the first element.
      * If `key` does not exist null will be returned.
-     * If `key` holds a value that is not a list, the transaction fails with an error.
      */
     public lpop(key: string): T {
         return this.addAndReturn(createLPop(key));
@@ -449,9 +443,9 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      *
      * @param key - The key of the list.
      * @param count - The count of the elements to pop from the list.
+     * 
      * Command Response - A list of the popped elements will be returned depending on the list's length.
      * If `key` does not exist null will be returned.
-     * If `key` holds a value that is not a list, the transaction fails with an error.
      */
     public lpopCount(key: string, count: number): T {
         return this.addAndReturn(createLPop(key, count));
@@ -471,7 +465,6 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      * If `start` exceeds the end of the list, or if `start` is greater than `end`, an empty list will be returned.
      * If `end` exceeds the actual end of the list, the range will stop at the actual end of the list.
      * If `key` does not exist an empty list will be returned.
-     * If `key` holds a value that is not a list, an error is raised.
      */
     public lrange(key: string, start: number, end: number): T {
         return this.addAndReturn(createLRange(key, start, end));
@@ -484,7 +477,6 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      *
      * Command Response - the length of the list at `key`.
      * If `key` does not exist, it is interpreted as an empty list and 0 is returned.
-     * If `key` holds a value that is not a list, an error is raised.
      */
     public llen(key: string): T {
         return this.addAndReturn(createLLen(key));
@@ -504,7 +496,6 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      * If `start` exceeds the end of the list, or if `start` is greater than `end`, the result will be an empty list (which causes key to be removed).
      * If `end` exceeds the actual end of the list, it will be treated like the last element of the list.
      * If `key` does not exist the command will be ignored.
-     * If `key` holds a value that is not a list, an error is raised.
      */
     public ltrim(key: string, start: number, end: number): T {
         return this.addAndReturn(createLTrim(key, start, end));
@@ -521,7 +512,6 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      *
      * Command Response - the number of the removed elements.
      * If `key` does not exist, 0 is returned.
-     * If `key` holds a value that is not a list, an error is raised.
      */
     public lrem(key: string, count: number, element: string): T {
         return this.addAndReturn(createLRem(key, count, element));
@@ -536,7 +526,6 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      * @param elements - The elements to insert at the tail of the list stored at `key`.
      *
      * Command Response - the length of the list after the push operations.
-     * If `key` holds a value that is not a list, an error is raised.
      */
     public rpush(key: string, elements: string[]): T {
         return this.addAndReturn(createRPush(key, elements));
@@ -547,9 +536,9 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      * See https://redis.io/commands/rpop/ for details.
      *
      * @param key - The key of the list.
+     * 
      * Command Response - The value of the last element.
      * If `key` does not exist null will be returned.
-     * If `key` holds a value that is not a list, the transaction fails with an error.
      */
     public rpop(key: string): T {
         return this.addAndReturn(createRPop(key));
@@ -560,9 +549,9 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      *
      * @param key - The key of the list.
      * @param count - The count of the elements to pop from the list.
+     * 
      * Command Response - A list of popped elements will be returned depending on the list's length.
      * If `key` does not exist null will be returned.
-     * If `key` holds a value that is not a list, the transaction fails with an error.
      */
     public rpopCount(key: string, count: number): T {
         return this.addAndReturn(createRPop(key, count));
@@ -576,7 +565,6 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      * @param members - A list of members to add to the set stored at `key`.
      *
      * Command Response - the number of members that were added to the set, not including all the members already present in the set.
-     * If `key` holds a value that is not a set, an error is raised.
      */
     public sadd(key: string, members: string[]): T {
         return this.addAndReturn(createSAdd(key, members));
@@ -590,7 +578,6 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      *
      * Command Response - the number of members that were removed from the set, not including non existing members.
      * If `key` does not exist, it is treated as an empty set and this command returns 0.
-     * If `key` holds a value that is not a set, an error is raised.
      */
     public srem(key: string, members: string[]): T {
         return this.addAndReturn(createSRem(key, members));
@@ -603,7 +590,6 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      *
      * Command Response - all members of the set.
      * If `key` does not exist, it is treated as an empty set and this command returns empty list.
-     * If `key` holds a value that is not a set, an error is raised.
      */
     public smembers(key: string): T {
         return this.addAndReturn(createSMembers(key));
@@ -615,7 +601,6 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      * @param key - The key to return the number of its members.
      *
      * Command Response - the cardinality (number of elements) of the set, or 0 if key does not exist.
-     * If `key` holds a value that is not a set, an error is raised.
      */
     public scard(key: string): T {
         return this.addAndReturn(createSCard(key));
@@ -750,7 +735,6 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      *
      * Command Response - The number of elements added to the sorted set.
      * If `changed` is set, returns the number of elements updated in the sorted set.
-     * If `key` holds a value that is not a sorted set, an error is returned.
      */
     public zadd(
         key: string,
@@ -780,7 +764,6 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      *
      * Command Response - The score of the member.
      * If there was a conflict with the options, the operation aborts and null is returned.
-     * If `key` holds a value that is not a sorted set, an error is returned.
      */
     public zaddIncr(
         key: string,
@@ -802,7 +785,6 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      *
      * Command Response - The number of members that were removed from the sorted set, not including non-existing members.
      * If `key` does not exist, it is treated as an empty sorted set, and this command returns 0.
-     * If `key` holds a value that is not a sorted set, an error is returned.
      */
     public zrem(key: string, members: string[]): T {
         return this.addAndReturn(createZrem(key, members));
@@ -815,10 +797,60 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      *
      * Command Response - The number of elements in the sorted set.
      * If `key` does not exist, it is treated as an empty sorted set, and this command returns 0.
-     * If `key` holds a value that is not a sorted set, an error is returned.
      */
     public zcard(key: string): T {
         return this.addAndReturn(createZcard(key));
+    }
+
+    /** Returns the score of `member` in the sorted set stored at `key`.
+     * See https://redis.io/commands/zscore/ for more details.
+     *
+     * @param key - The key of the sorted set.
+     * @param member - The member whose score is to be retrieved.
+     *
+     * Command Response - The score of the member.
+     * If `member` does not exist in the sorted set, null is returned.
+     * If `key` does not exist, null is returned.
+     */
+    public zscore(key: string, member: string): T {
+        return this.addAndReturn(createZscore(key, member));
+    }
+
+    /** Returns the number of members in the sorted set stored at `key` with scores between `minScore` and `maxScore`.
+     * See https://redis.io/commands/zcount/ for more details.
+     *
+     * @param key - The key of the sorted set.
+     * @param minScore - The minimum score to count from. Can be positive/negative infinity, or specific score and inclusivity.
+     * @param maxScore - The maximum score to count up to. Can be positive/negative infinity, or specific score and inclusivity.
+     *
+     * Command Response - The number of members in the specified score range.
+     * If `key` does not exist, it is treated as an empty sorted set, and the command returns 0.
+     * If `minScore` is greater than `maxScore`, 0 is returned.
+     */
+    public zcount(key: string, minScore: ScoreLimit, maxScore: ScoreLimit): T {
+        return this.addAndReturn(createZcount(key, minScore, maxScore));
+    }
+
+    /** Returns the string representation of the type of the value stored at `key`.
+     * See https://redis.io/commands/type/ for more details.
+     * 
+     * @param key - The key to check its data type.
+     * 
+     * Command Response - If the key exists, the type of the stored value is returned. Otherwise, a "none" string is returned.
+     */
+    public type(key: string): T {
+        return this.addAndReturn(createType(key));
+    }
+
+    /** Returns the length of the string value stored at `key`.
+     * See https://redis.io/commands/strlen/ for more details.
+     *
+     * @param key - The `key` to check its length.
+     * Command Response - The length of the string value stored at `key`
+     * If `key` does not exist, it is treated as an empty string, and the command returns 0.
+     */
+    public strlen(key: string): T {
+        return this.addAndReturn(createStrlen(key));
     }
 
     /** Executes a single command, without checking inputs. Every part of the command, including subcommands,
@@ -834,6 +866,21 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      */
     public customCommand(args: string[]): T {
         return this.addAndReturn(createCustomCommand(args));
+    }
+
+    /** Returns the element at index `index` in the list stored at `key`.
+     * The index is zero-based, so 0 means the first element, 1 the second element and so on.
+     * Negative indices can be used to designate elements starting at the tail of the list.
+     * Here, -1 means the last element, -2 means the penultimate and so forth.
+     * See https://redis.io/commands/lindex/ for more details.
+     *
+     * @param key - The `key` of the list.
+     * @param index - The `index` of the element in the list to retrieve.
+     * Command Response - The element at index in the list stored at `key`.
+     * If `index` is out of range or if `key` does not exist, null is returned.
+     */
+    public lindex(key: string, index: number): T {
+        return this.addAndReturn(createLindex(key, index));
     }
 }
 

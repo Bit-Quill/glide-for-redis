@@ -27,8 +27,10 @@ import lombok.SneakyThrows;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import redis_request.RedisRequestOuterClass.RedisRequest;
+import response.ResponseOuterClass.ConstantResponse;
 import response.ResponseOuterClass.Response;
 
+@SuppressWarnings("unchecked,resource")
 public class RedisClusterClientTest {
 
     RedisClusterClient service;
@@ -54,9 +56,7 @@ public class RedisClusterClientTest {
         var client = new TestClient(commandManager, "TEST");
 
         var value = client.customCommand(TEST_ARGS).get();
-        assertAll(
-                () -> assertTrue(value.hasSingleData()),
-                () -> assertEquals("TEST", value.getSingleValue()));
+        assertEquals("TEST", value.getSingleValue());
     }
 
     @Test
@@ -68,8 +68,7 @@ public class RedisClusterClientTest {
         var client = new TestClient(commandManager, data);
 
         var value = client.customCommand(TEST_ARGS).get();
-        assertAll(
-                () -> assertTrue(value.hasMultiData()), () -> assertEquals(data, value.getMultiValue()));
+        assertEquals(data, value.getMultiValue());
     }
 
     @Test
@@ -82,8 +81,7 @@ public class RedisClusterClientTest {
         var client = new TestClient(commandManager, data);
 
         var value = client.customCommand(TEST_ARGS, RANDOM).get();
-        assertAll(
-                () -> assertTrue(value.hasSingleData()), () -> assertEquals(data, value.getSingleValue()));
+        assertEquals(data, value.getSingleValue());
     }
 
     @Test
@@ -95,8 +93,20 @@ public class RedisClusterClientTest {
         var client = new TestClient(commandManager, data);
 
         var value = client.customCommand(TEST_ARGS, ALL_NODES).get();
-        assertAll(
-                () -> assertTrue(value.hasMultiData()), () -> assertEquals(data, value.getMultiValue()));
+        assertEquals(data, value.getMultiValue());
+    }
+
+    @Test
+    @SneakyThrows
+    public void custom_command_returns_single_value_on_constant_response() {
+        var commandManager =
+                new TestCommandManager(
+                        Response.newBuilder().setConstantResponse(ConstantResponse.OK).build());
+
+        var client = new TestClient(commandManager, "OK");
+
+        var value = client.customCommand(TEST_ARGS, ALL_NODES).get();
+        assertEquals("OK", value.getSingleValue());
     }
 
     private static class TestClient extends RedisClusterClient {
@@ -108,9 +118,10 @@ public class RedisClusterClientTest {
             object = objectToReturn;
         }
 
+        @SuppressWarnings("unchecked")
         @Override
-        protected Object handleObjectOrNullResponse(Response response) {
-            return object;
+        protected <T> T handleRedisResponse(Class<T> classType, boolean isNullable, Response response) {
+            return (T) object;
         }
     }
 
@@ -120,7 +131,7 @@ public class RedisClusterClientTest {
 
         public TestCommandManager(Response responseToReturn) {
             super(null);
-            response = responseToReturn;
+            response = responseToReturn != null ? responseToReturn : Response.newBuilder().build();
         }
 
         @Override
@@ -158,7 +169,7 @@ public class RedisClusterClientTest {
         // setup
         String message = "RETURN OF THE PONG";
         String[] arguments = new String[] {message};
-        CompletableFuture<String> testResponse = new CompletableFuture();
+        CompletableFuture<String> testResponse = new CompletableFuture<>();
         testResponse.complete(message);
 
         Route route = ALL_PRIMARIES;
@@ -250,5 +261,57 @@ public class RedisClusterClientTest {
         Map<String, String> clusterMap = clusterValue.getMultiValue();
         assertEquals("addr1 result", clusterMap.get("addr1"));
         assertEquals("addr2 result", clusterMap.get("addr2"));
+    }
+
+    @Test
+    @SneakyThrows
+    public void info_with_single_node_route_returns_single_value() {
+        var commandManager = new TestCommandManager(null);
+
+        var data = "info string";
+        var client = new TestClient(commandManager, data);
+
+        var value = client.info(RANDOM).get();
+        assertAll(
+                () -> assertTrue(value.hasSingleData()), () -> assertEquals(data, value.getSingleValue()));
+    }
+
+    @Test
+    @SneakyThrows
+    public void info_with_multi_node_route_returns_multi_value() {
+        var commandManager = new TestCommandManager(null);
+
+        var data = Map.of("key1", "value1", "key2", "value2");
+        var client = new TestClient(commandManager, data);
+
+        var value = client.info(ALL_NODES).get();
+        assertAll(
+                () -> assertTrue(value.hasMultiData()), () -> assertEquals(data, value.getMultiValue()));
+    }
+
+    @Test
+    @SneakyThrows
+    public void info_with_options_and_single_node_route_returns_single_value() {
+        var commandManager = new TestCommandManager(null);
+
+        var data = "info string";
+        var client = new TestClient(commandManager, data);
+
+        var value = client.info(InfoOptions.builder().build(), RANDOM).get();
+        assertAll(
+                () -> assertTrue(value.hasSingleData()), () -> assertEquals(data, value.getSingleValue()));
+    }
+
+    @Test
+    @SneakyThrows
+    public void info_with_options_and_multi_node_route_returns_multi_value() {
+        var commandManager = new TestCommandManager(null);
+
+        var data = Map.of("key1", "value1", "key2", "value2");
+        var client = new TestClient(commandManager, data);
+
+        var value = client.info(InfoOptions.builder().build(), ALL_NODES).get();
+        assertAll(
+                () -> assertTrue(value.hasMultiData()), () -> assertEquals(data, value.getMultiValue()));
     }
 }

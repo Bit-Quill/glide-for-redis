@@ -1,18 +1,25 @@
 ## 0.2.0 (2024-02-11)
 
 #### Changes
-* Python, Node: Added ZCARD command ([#877](https://github.com/aws/glide-for-redis/pull/885), [#885](https://github.com/aws/glide-for-redis/pull/885))
+* Python, Node: Added ZCARD command ([#871](https://github.com/aws/glide-for-redis/pull/871), [#885](https://github.com/aws/glide-for-redis/pull/885))
 * Python, Node: Added ZADD and ZADDINCR commands ([#814](https://github.com/aws/glide-for-redis/pull/814), [#830](https://github.com/aws/glide-for-redis/pull/830))
 * Python, Node: Added ZREM command ([#834](https://github.com/aws/glide-for-redis/pull/834), [#831](https://github.com/aws/glide-for-redis/pull/831))
-* Python, Node: Added ZSCORE command ([#885](https://github.com/aws/glide-for-redis/pull/885), [#871](https://github.com/aws/glide-for-redis/pull/871))
+* Python, Node: Added ZSCORE command ([#877](https://github.com/aws/glide-for-redis/pull/877), [#889](https://github.com/aws/glide-for-redis/pull/889))
 * Use jemalloc as default allocator. ([#847](https://github.com/aws/glide-for-redis/pull/847))
 * Python, Node: Added RPOPCOUNT and LPOPCOUNT to transaction ([#874](https://github.com/aws/glide-for-redis/pull/874))
 * Standalone client: Improve connection errors. ([#854](https://github.com/aws/glide-for-redis/pull/854))
 * Python, Node: When recieving LPOP/RPOP with count, convert result to Array. ([#811](https://github.com/aws/glide-for-redis/pull/811))
+* Python, Node: Added TYPE command ([#945](https://github.com/aws/glide-for-redis/pull/945), [#980](https://github.com/aws/glide-for-redis/pull/980))
+* Python: Added HLEN command ([#944](https://github.com/aws/glide-for-redis/pull/944))
+* Node: Added ZCOUNT command ([#909](https://github.com/aws/glide-for-redis/pull/909))
+* Python: Added ECHO command ([#953](https://github.com/aws/glide-for-redis/pull/953))
+* Python: Added ZPOPMIN command ([#975](https://github.com/aws/glide-for-redis/pull/975))
+* Node: Added STRLEN command ([#993](https://github.com/aws/glide-for-redis/pull/993))
+* Node: Added LINDEX command ([#999](https://github.com/aws/glide-for-redis/pull/999))
 
 #### Features
 * Python, Node: Added support in Lua Scripts ([#775](https://github.com/aws/glide-for-redis/pull/775), [#860](https://github.com/aws/glide-for-redis/pull/860))
-* Node: Allow chaining function calls on transaction. ([#902](https://github.com/aws/glide-for-redis/pull/902)) 
+* Python, Node: Allow chaining function calls on transaction. ([#902](https://github.com/aws/glide-for-redis/pull/902)), ([#987](https://github.com/aws/glide-for-redis/pull/987))
 
 #### Fixes
 * Core: Fixed `Connection Refused` error not to close the client ([#872](https://github.com/aws/glide-for-redis/pull/872))

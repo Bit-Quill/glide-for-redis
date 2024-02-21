@@ -6,6 +6,7 @@ import static redis_request.RedisRequestOuterClass.RequestType.Info;
 
 import glide.api.commands.GenericCommands;
 import glide.api.commands.ServerManagementCommands;
+import glide.api.models.Transaction;
 import glide.api.models.commands.InfoOptions;
 import glide.api.models.configuration.RedisClientConfiguration;
 import glide.managers.CommandManager;
@@ -29,13 +30,19 @@ public class RedisClient extends BaseClient implements GenericCommands, ServerMa
      * @param config Redis client Configuration
      * @return A Future to connect and return a RedisClient
      */
-    public static CompletableFuture<RedisClient> CreateClient(RedisClientConfiguration config) {
+    public static CompletableFuture<RedisClient> CreateClient(
+            @NonNull RedisClientConfiguration config) {
         return CreateClient(config, RedisClient::new);
     }
 
     @Override
     public CompletableFuture<Object> customCommand(@NonNull String[] args) {
         return commandManager.submitNewCommand(CustomCommand, args, this::handleObjectOrNullResponse);
+    }
+
+    @Override
+    public CompletableFuture<Object[]> exec(Transaction transaction) {
+        return commandManager.submitNewCommand(transaction, this::handleArrayOrNullResponse);
     }
 
     @Override

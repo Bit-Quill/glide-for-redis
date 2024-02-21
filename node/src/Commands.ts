@@ -760,3 +760,83 @@ export function createZrem(
 export function createZcard(key: string): redis_request.Command {
     return createCommand(RequestType.Zcard, [key]);
 }
+
+/**
+ * @internal
+ */
+export function createZscore(key: string, member: string): redis_request.Command {
+    return createCommand(RequestType.ZScore, [key, member]);
+}
+
+export type ScoreLimit =
+    | `positiveInfinity`
+    | `negativeInfinity`
+    | {
+          bound: number;
+          isInclusive?: boolean;
+      };
+
+const positiveInfinityArg = "+inf";
+const negativeInfinityArg = "-inf";
+const isInclusiveArg = "(";
+
+/**
+ * @internal
+ */
+export function createZcount(
+    key: string,
+    minScore: ScoreLimit,
+    maxScore: ScoreLimit
+): redis_request.Command {
+    const args = [key];
+
+    if (minScore == "positiveInfinity") {
+        args.push(positiveInfinityArg);
+    } else if (minScore == "negativeInfinity") {
+        args.push(negativeInfinityArg);
+    } else {
+        const value =
+            minScore.isInclusive == false
+                ? isInclusiveArg + minScore.bound.toString()
+                : minScore.bound.toString();
+        args.push(value);
+    }
+
+    if (maxScore == "positiveInfinity") {
+        args.push(positiveInfinityArg);
+    } else if (maxScore == "negativeInfinity") {
+        args.push(negativeInfinityArg);
+    } else {
+        const value =
+            maxScore.isInclusive == false
+                ? isInclusiveArg + maxScore.bound.toString()
+                : maxScore.bound.toString();
+        args.push(value);
+    }
+    
+    return createCommand(RequestType.Zcount, args);
+}    
+
+/**
+ * @internal
+ */
+export function createType(key: string): redis_request.Command {
+    return createCommand(RequestType.Type, [key]);
+}
+
+/**
+ * @internal
+ */
+export function createStrlen(key: string): redis_request.Command {
+    return createCommand(RequestType.Strlen, [key]);
+}
+
+/**
+ * @internal
+ */
+export function createLindex(
+    key: string,
+    index: number
+): redis_request.Command {
+    return createCommand(RequestType.Lindex, [key, index.toString()]);
+}

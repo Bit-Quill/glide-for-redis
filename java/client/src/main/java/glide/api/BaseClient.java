@@ -2,11 +2,31 @@
 package glide.api;
 
 import static glide.ffi.resolvers.SocketListenerResolver.getSocket;
+import static glide.utils.ArrayTransformUtils.castArray;
+import static glide.utils.ArrayTransformUtils.convertMapToArgArray;
+import static redis_request.RedisRequestOuterClass.RequestType.Decr;
+import static redis_request.RedisRequestOuterClass.RequestType.DecrBy;
+import static redis_request.RedisRequestOuterClass.RequestType.Del;
 import static redis_request.RedisRequestOuterClass.RequestType.GetString;
+import static redis_request.RedisRequestOuterClass.RequestType.HashDel;
+import static redis_request.RedisRequestOuterClass.RequestType.HashGet;
+import static redis_request.RedisRequestOuterClass.RequestType.HashSet;
+import static redis_request.RedisRequestOuterClass.RequestType.Incr;
+import static redis_request.RedisRequestOuterClass.RequestType.IncrBy;
+import static redis_request.RedisRequestOuterClass.RequestType.IncrByFloat;
+import static redis_request.RedisRequestOuterClass.RequestType.MGet;
+import static redis_request.RedisRequestOuterClass.RequestType.MSet;
 import static redis_request.RedisRequestOuterClass.RequestType.Ping;
+import static redis_request.RedisRequestOuterClass.RequestType.SAdd;
+import static redis_request.RedisRequestOuterClass.RequestType.SCard;
+import static redis_request.RedisRequestOuterClass.RequestType.SMembers;
+import static redis_request.RedisRequestOuterClass.RequestType.SRem;
 import static redis_request.RedisRequestOuterClass.RequestType.SetString;
 
 import glide.api.commands.ConnectionManagementCommands;
+import glide.api.commands.GenericBaseCommands;
+import glide.api.commands.HashCommands;
+import glide.api.commands.SetCommands;
 import glide.api.commands.StringCommands;
 import glide.api.models.commands.SetOptions;
 import glide.api.models.configuration.BaseClientConfiguration;
@@ -20,6 +40,8 @@ import glide.ffi.resolvers.RedisValueResolver;
 import glide.managers.BaseCommandResponseResolver;
 import glide.managers.CommandManager;
 import glide.managers.ConnectionManager;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.function.BiFunction;
@@ -32,7 +54,12 @@ import response.ResponseOuterClass.Response;
 /** Base Client class for Redis */
 @AllArgsConstructor
 public abstract class BaseClient
-        implements AutoCloseable, ConnectionManagementCommands, StringCommands {
+        implements AutoCloseable,
+                GenericBaseCommands,
+                ConnectionManagementCommands,
+                StringCommands,
+                HashCommands,
+                SetCommands {
     /** Redis simple string response with "OK" */
     public static final String OK = ConstantResponse.OK.toString();
 
@@ -115,7 +142,7 @@ public abstract class BaseClient
      * @throws RedisException on a type mismatch
      */
     @SuppressWarnings("unchecked")
-    private <T> T handleRedisResponse(Class<T> classType, boolean isNullable, Response response)
+    protected <T> T handleRedisResponse(Class<T> classType, boolean isNullable, Response response)
             throws RedisException {
         Object value =
                 new BaseCommandResponseResolver(RedisValueResolver::valueFromPointer).apply(response);
@@ -133,10 +160,6 @@ public abstract class BaseClient
                         + classType.getSimpleName());
     }
 
-    protected Object handleObjectResponse(Response response) throws RedisException {
-        return handleRedisResponse(Object.class, false, response);
-    }
-
     protected Object handleObjectOrNullResponse(Response response) throws RedisException {
         return handleRedisResponse(Object.class, true, response);
     }
@@ -149,6 +172,37 @@ public abstract class BaseClient
         return handleRedisResponse(String.class, true, response);
     }
 
+    protected Long handleLongResponse(Response response) throws RedisException {
+        return handleRedisResponse(Long.class, false, response);
+    }
+
+    protected Double handleDoubleResponse(Response response) throws RedisException {
+        return handleRedisResponse(Double.class, false, response);
+    }
+
+    protected Object[] handleArrayResponse(Response response) throws RedisException {
+        return handleRedisResponse(Object[].class, false, response);
+    }
+
+    protected Object[] handleArrayOrNullResponse(Response response) throws RedisException {
+        return handleRedisResponse(Object[].class, true, response);
+    }
+
+    /**
+     * @param response A Protobuf response
+     * @return A map of <code>String</code> to <code>V</code>
+     * @param <V> Value type could be even map too
+     */
+    @SuppressWarnings("unchecked") // raw Map cast to Map<String, V>
+    protected <V> Map<String, V> handleMapResponse(Response response) throws RedisException {
+        return handleRedisResponse(Map.class, false, response);
+    }
+
+    @SuppressWarnings("unchecked") // raw Set cast to Set<String>
+    protected Set<String> handleSetResponse(Response response) throws RedisException {
+        return handleRedisResponse(Set.class, false, response);
+    }
+
     @Override
     public CompletableFuture<String> ping() {
         return commandManager.submitNewCommand(Ping, new String[0], this::handleStringResponse);
@@ -157,6 +211,11 @@ public abstract class BaseClient
     @Override
     public CompletableFuture<String> ping(@NonNull String str) {
         return commandManager.submitNewCommand(Ping, new String[] {str}, this::handleStringResponse);
+    }
+
+    @Override
+    public CompletableFuture<Long> del(@NonNull String[] keys) {
+        return commandManager.submitNewCommand(Del, keys, this::handleLongResponse);
     }
 
     @Override
@@ -176,5 +235,86 @@ public abstract class BaseClient
             @NonNull String key, @NonNull String value, @NonNull SetOptions options) {
         String[] arguments = ArrayUtils.addAll(new String[] {key, value}, options.toArgs());
         return commandManager.submitNewCommand(SetString, arguments, this::handleStringOrNullResponse);
+    }
+
+    @Override
+    public CompletableFuture<String[]> mget(@NonNull String[] keys) {
+        return commandManager.submitNewCommand(
+                MGet, keys, response -> castArray(handleArrayOrNullResponse(response), String.class));
+    }
+
+    @Override
+    public CompletableFuture<String> mset(@NonNull Map<String, String> keyValueMap) {
+        String[] args = convertMapToArgArray(keyValueMap);
+        return commandManager.submitNewCommand(MSet, args, this::handleStringResponse);
+    }
+
+    @Override
+    public CompletableFuture<Long> incr(@NonNull String key) {
+        return commandManager.submitNewCommand(Incr, new String[] {key}, this::handleLongResponse);
+    }
+
+    @Override
+    public CompletableFuture<Long> incrBy(@NonNull String key, long amount) {
+        return commandManager.submitNewCommand(
+                IncrBy, new String[] {key, Long.toString(amount)}, this::handleLongResponse);
+    }
+
+    @Override
+    public CompletableFuture<Double> incrByFloat(@NonNull String key, double amount) {
+        return commandManager.submitNewCommand(
+                IncrByFloat, new String[] {key, Double.toString(amount)}, this::handleDoubleResponse);
+    }
+
+    @Override
+    public CompletableFuture<Long> decr(@NonNull String key) {
+        return commandManager.submitNewCommand(Decr, new String[] {key}, this::handleLongResponse);
+    }
+
+    @Override
+    public CompletableFuture<Long> decrBy(@NonNull String key, long amount) {
+        return commandManager.submitNewCommand(
+                DecrBy, new String[] {key, Long.toString(amount)}, this::handleLongResponse);
+    }
+
+    @Override
+    public CompletableFuture<String> hget(@NonNull String key, @NonNull String field) {
+        return commandManager.submitNewCommand(
+                HashGet, new String[] {key, field}, this::handleStringOrNullResponse);
+    }
+
+    @Override
+    public CompletableFuture<Long> hset(
+            @NonNull String key, @NonNull Map<String, String> fieldValueMap) {
+        String[] args = ArrayUtils.addFirst(convertMapToArgArray(fieldValueMap), key);
+        return commandManager.submitNewCommand(HashSet, args, this::handleLongResponse);
+    }
+
+    @Override
+    public CompletableFuture<Long> hdel(@NonNull String key, @NonNull String[] fields) {
+        String[] args = ArrayUtils.addFirst(fields, key);
+        return commandManager.submitNewCommand(HashDel, args, this::handleLongResponse);
+    }
+
+    @Override
+    public CompletableFuture<Long> sadd(String key, String[] members) {
+        String[] arguments = ArrayUtils.addFirst(members, key);
+        return commandManager.submitNewCommand(SAdd, arguments, this::handleLongResponse);
+    }
+
+    @Override
+    public CompletableFuture<Long> srem(String key, String[] members) {
+        String[] arguments = ArrayUtils.addFirst(members, key);
+        return commandManager.submitNewCommand(SRem, arguments, this::handleLongResponse);
+    }
+
+    @Override
+    public CompletableFuture<Set<String>> smembers(String key) {
+        return commandManager.submitNewCommand(SMembers, new String[] {key}, this::handleSetResponse);
+    }
+
+    @Override
+    public CompletableFuture<Long> scard(String key) {
+        return commandManager.submitNewCommand(SCard, new String[] {key}, this::handleLongResponse);
     }
 }

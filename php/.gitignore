@@ -1,0 +1,8 @@
+# Ignore compose dependencies
+composer.lock
+vendor/
+composer.phar
+.php-cs-fixer.cache
+
+# Ignore protobuf generated files
+protobuf

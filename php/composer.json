@@ -1,0 +1,65 @@
+{
+  "name": "aws/glide-for-redis",
+  "description": "An AWS-sponsored, open-source Redis client.",
+  "type": "library",
+  "license": "Apache-2.0",
+  "authors": [
+    {
+        "name": "Amazon Web Services"
+    }
+  ],
+  "require": {
+    "php": "^8.1",
+    "amphp/amp": "^3.0",
+    "symfony/lock": "^7.0",
+    "ext-ffi": "*"
+  },
+  "require-dev": {
+    "friendsofphp/php-cs-fixer": "^3.49",
+    "phpunit/phpunit": "^9.3"
+  },
+  "autoload": {
+    "psr-4": {
+      "Glide\\": "Glide/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+        "Glide\\Tests\\": "tests/",
+        "Glide\\Util\\": "utils/"
+    }
+  },
+  "config": {
+    "sort-packages": true
+  },
+  "scripts": {
+    "rust-build": [
+      "cargo build"
+    ],
+    "rust-build-release": [
+      "cargo build --release"
+    ],
+    "php-cs": [
+      "php-cs-fixer fix"
+    ],
+    "unit": [
+      "phpunit --exclude-group Integration"
+    ],
+    "it": [
+      "phpunit --group Integration"
+    ],
+    "phpunit": [
+      "phpunit"
+    ],
+    "examples": [
+      "php public/client_example.php"
+    ],
+    "apigen": [
+      "rm -f apigen",
+      "curl -L https://github.com/ApiGen/ApiGen/releases/download/v7.0.0-alpha.4/apigen.phar -o apigen",
+      "chmod +x apigen",
+      "./apigen src --output docs",
+      "rm -f apigen"
+    ]
+  }
+}

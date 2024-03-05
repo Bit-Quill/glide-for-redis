@@ -15,6 +15,10 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionHandler;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import org.apache.commons.lang3.tuple.Pair;
@@ -27,7 +31,7 @@ public class Benchmarking {
     static final int SIZE_SET_KEYSPACE = 3000000;
     public static final double NANO_TO_SECONDS = 1e9;
 
-    static final int NUM_OF_THREADS_TO_EXECUTE = 12;
+    static final int NUM_OF_THREADS_TO_EXECUTE = Runtime.getRuntime().availableProcessors();
 
     private static ChosenAction randomAction() {
         if (Math.random() > PROB_GET) {
@@ -113,6 +117,22 @@ public class Benchmarking {
             Supplier<Client> clientCreator, BenchmarkingApp.RunConfiguration config, boolean async) {
         for (int concurrentNum : config.concurrentTasks) {
             ExecutorService executor = Executors.newFixedThreadPool(NUM_OF_THREADS_TO_EXECUTE);
+            new ThreadPoolExecutor(
+                NUM_OF_THREADS_TO_EXECUTE,
+                NUM_OF_THREADS_TO_EXECUTE,
+                0L,
+                TimeUnit.MILLISECONDS,
+                new LinkedBlockingQueue<Runnable>(),
+                (r, executor1) -> {
+                    if (!executor1.isShutdown()) {
+                        try {
+                            executor1.getQueue().put(r);
+                        } catch (InterruptedException e) {
+                            ;
+                        }
+                    }
+                });
+
             int iterations =
                     config.minimal ? 1000 : Math.min(Math.max(100000, concurrentNum * 10000), 10000000);
             for (int clientCount : config.clientCount) {

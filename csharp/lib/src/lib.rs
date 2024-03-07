@@ -1,15 +1,17 @@
 /**
  * Copyright GLIDE-for-Redis Project Contributors - SPDX Identifier: Apache-2.0
  */
+pub mod configuration;
+use configuration::{ConnectionConfig, NodeAddress, ProtocolVersion, ReadFrom, TlsMode};
+
+use glide_core::client::Client as GlideClient;
 use glide_core::connection_request;
-use glide_core::{client::Client as GlideClient, connection_request::NodeAddress};
 use redis::{Cmd, FromRedisValue, RedisResult};
 use std::{
     ffi::{c_void, CStr, CString},
     os::raw::c_char,
 };
-use tokio::runtime::Builder;
-use tokio::runtime::Runtime;
+use tokio::runtime::{Builder, Runtime};
 
 pub enum Level {
     Error = 0,
@@ -26,37 +28,111 @@ pub struct Client {
     runtime: Runtime,
 }
 
-fn create_connection_request(
-    host: String,
-    port: u32,
-    use_tls: bool,
-) -> connection_request::ConnectionRequest {
-    let mut address_info = NodeAddress::new();
-    address_info.host = host.to_string().into();
-    address_info.port = port;
-    let addresses_info = vec![address_info];
-    let mut connection_request = connection_request::ConnectionRequest::new();
-    connection_request.addresses = addresses_info;
-    connection_request.tls_mode = if use_tls {
-        connection_request::TlsMode::SecureTls
+/// Convert raw C string to a rust string.
+///
+/// # Safety
+///
+/// * `ptr` must be able to be safely casted to a valid `CStr` via `CStr::from_ptr`. See the safety documentation of [`std::ffi::CStr::from_ptr`](https://doc.rust-lang.org/std/ffi/struct.CStr.html#method.from_ptr).
+unsafe fn ptr_to_str(ptr: *const c_char) -> String {
+    if ptr as i64 != 0 {
+        unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().into()
     } else {
-        connection_request::TlsMode::NoTls
+        "".into()
+    }
+}
+
+/// Convert raw array pointer to a vector of [`NodeAddress`](NodeAddress)es.
+///
+/// # Safety
+///
+/// * `len` must not be greater than `isize::MAX`. See the safety documentation of [`std::slice::from_raw_parts`](https://doc.rust-lang.org/std/slice/fn.from_raw_parts.html).
+/// * `data` must not be null.
+/// * `data` must point to `len` consecutive properly initialized [`NodeAddress`](NodeAddress) structs.
+/// * Each [`NodeAddress`](NodeAddress) dereferenced by `data` must contain a valid string pointer. See the safety documentation of [`ptr_to_str`](ptr_to_str).
+#[allow(rustdoc::redundant_explicit_links)]
+unsafe fn node_addresses_to_proto(
+    data: *const *const NodeAddress,
+    len: usize,
+) -> Vec<connection_request::NodeAddress> {
+    unsafe { std::slice::from_raw_parts(data as *mut NodeAddress, len) }
+        .iter()
+        .map(|addr| {
+            let mut address_info = connection_request::NodeAddress::new();
+            address_info.host = unsafe { ptr_to_str(addr.host) }.into();
+            address_info.port = addr.port as u32;
+            address_info
+        })
+        .collect()
+}
+
+/// Convert connection configuration to a corresponding protobuf object.
+///
+/// # Safety
+///
+/// * `config` must not be null.
+/// * `config` must be a valid pointer to a [`ConnectionConfig`](ConnectionConfig) struct.
+/// * Dereferenced [`ConnectionConfig`](ConnectionConfig) struct and all nested structs must contain valid pointers. See the safety documentation of [`node_addresses_to_proto`](node_addresses_to_proto) and [`ptr_to_str`](ptr_to_str).
+#[allow(rustdoc::redundant_explicit_links)]
+unsafe fn create_connection_request(
+    config: *const ConnectionConfig,
+) -> connection_request::ConnectionRequest {
+    let mut connection_request = connection_request::ConnectionRequest::new();
+
+    let config_ref = unsafe { &*config };
+
+    connection_request.addresses =
+        unsafe { node_addresses_to_proto(config_ref.addresses, config_ref.address_count) };
+
+    connection_request.tls_mode = match config_ref.tls_mode {
+        TlsMode::Secure => connection_request::TlsMode::SecureTls,
+        TlsMode::Insecure => connection_request::TlsMode::InsecureTls,
+        TlsMode::NoTls => connection_request::TlsMode::NoTls,
     }
     .into();
+    connection_request.cluster_mode_enabled = config_ref.cluster_mode;
+    connection_request.request_timeout = config_ref.request_timeout;
+
+    connection_request.read_from = match config_ref.read_from {
+        ReadFrom::AZAffinity => connection_request::ReadFrom::AZAffinity,
+        ReadFrom::PreferReplica => connection_request::ReadFrom::PreferReplica,
+        ReadFrom::Primary => connection_request::ReadFrom::Primary,
+        ReadFrom::LowestLatency => connection_request::ReadFrom::LowestLatency,
+    }
+    .into();
+
+    let mut retry_strategy = connection_request::ConnectionRetryStrategy::new();
+    retry_strategy.number_of_retries = config_ref.connection_retry_strategy.number_of_retries;
+    retry_strategy.factor = config_ref.connection_retry_strategy.factor;
+    retry_strategy.exponent_base = config_ref.connection_retry_strategy.exponent_base;
+    connection_request.connection_retry_strategy = Some(retry_strategy).into();
+
+    let mut auth_info = connection_request::AuthenticationInfo::new();
+    auth_info.username = unsafe { ptr_to_str(config_ref.authentication_info.username) }.into();
+    auth_info.password = unsafe { ptr_to_str(config_ref.authentication_info.password) }.into();
+    connection_request.authentication_info = Some(auth_info).into();
+
+    connection_request.database_id = config_ref.database_id;
+    connection_request.protocol = match config_ref.protocol {
+        ProtocolVersion::RESP2 => connection_request::ProtocolVersion::RESP2,
+        ProtocolVersion::RESP3 => connection_request::ProtocolVersion::RESP3,
+    }
+    .into();
+
+    connection_request.client_name = unsafe { ptr_to_str(config_ref.client_name) }.into();
 
     connection_request
 }
 
-fn create_client_internal(
-    host: *const c_char,
-    port: u32,
-    use_tls: bool,
+/// # Safety
+///
+/// * `config` must be a valid [`ConnectionConfig`](ConnectionConfig) pointer. See the safety documentation of [`create_connection_request`](create_connection_request).
+#[allow(rustdoc::redundant_explicit_links)]
+unsafe fn create_client_internal(
+    config: *const ConnectionConfig,
     success_callback: unsafe extern "C" fn(usize, *const c_char) -> (),
     failure_callback: unsafe extern "C" fn(usize) -> (),
 ) -> RedisResult<Client> {
-    let host_cstring = unsafe { CStr::from_ptr(host as *mut c_char) };
-    let host_string = host_cstring.to_str()?.to_string();
-    let request = create_connection_request(host_string, port, use_tls);
+    let request = unsafe { create_connection_request(config) };
     let runtime = Builder::new_multi_thread()
         .enable_all()
         .thread_name("GLIDE for Redis C# thread")
@@ -71,31 +147,49 @@ fn create_client_internal(
     })
 }
 
-/// Creates a new client to the given address. The success callback needs to copy the given string synchronously, since it will be dropped by Rust once the callback returns. All callbacks should be offloaded to separate threads in order not to exhaust the client's thread pool.
+/// Creates a new client with the given configuration. The success callback needs to copy the given string synchronously, since it will be dropped by Rust once the callback returns. All callbacks should be offloaded to separate threads in order not to exhaust the client's thread pool.
+///
+/// # Safety
+///
+/// * `config` must be a valid [`ConnectionConfig`](ConnectionConfig) pointer. See the safety documentation of [`create_client_internal`](create_client_internal).
+#[allow(rustdoc::redundant_explicit_links)]
+#[allow(rustdoc::private_intra_doc_links)]
 #[no_mangle]
-pub extern "C" fn create_client(
-    host: *const c_char,
-    port: u32,
-    use_tls: bool,
+pub unsafe extern "C" fn create_client(
+    config: *const ConnectionConfig,
     success_callback: unsafe extern "C" fn(usize, *const c_char) -> (),
     failure_callback: unsafe extern "C" fn(usize) -> (),
 ) -> *const c_void {
-    match create_client_internal(host, port, use_tls, success_callback, failure_callback) {
+    match unsafe { create_client_internal(config, success_callback, failure_callback) } {
         Err(_) => std::ptr::null(), // TODO - log errors
         Ok(client) => Box::into_raw(Box::new(client)) as *const c_void,
     }
 }
 
+/// Closes the given client, deallocating it from the heap.
+///
+/// # Safety
+///
+/// * `client_ptr` must not be null.
+/// * `client_ptr` must be able to be safely casted to a valid `Box<Client>` via `Box::from_raw`. See the safety documentation of [`std::boxed::Box::from_raw`](https://doc.rust-lang.org/std/boxed/struct.Box.html#method.from_raw).
 #[no_mangle]
-pub extern "C" fn close_client(client_ptr: *const c_void) {
+pub unsafe extern "C" fn close_client(client_ptr: *const c_void) {
     let client_ptr = unsafe { Box::from_raw(client_ptr as *mut Client) };
     let _runtime_handle = client_ptr.runtime.enter();
     drop(client_ptr);
 }
 
-/// Expects that key and value will be kept valid until the callback is called.
+/// Execute `SET` command. See [`redis.io`](https://redis.io/commands/set/) for details.
+///
+/// # Safety
+///
+/// * `client_ptr` must not be null.
+/// * `client_ptr` must be able to be safely casted to a valid `Box<Client>` via `Box::from_raw`. See the safety documentation of [`std::boxed::Box::from_raw`](https://doc.rust-lang.org/std/boxed/struct.Box.html#method.from_raw).
+/// * `key` and `value` must not be null.
+/// * `key` and `value` must be able to be safely casted to a valid `CStr` via `CStr::from_ptr`. See the safety documentation of [`std::ffi::CStr::from_ptr`](https://doc.rust-lang.org/std/ffi/struct.CStr.html#method.from_ptr).
+/// * `key` and `value` must be kept valid until the callback is called.
 #[no_mangle]
-pub extern "C" fn set(
+pub unsafe extern "C" fn set(
     client_ptr: *const c_void,
     callback_index: usize,
     key: *const c_char,
@@ -124,10 +218,18 @@ pub extern "C" fn set(
     });
 }
 
-/// Expects that key will be kept valid until the callback is called. If the callback is called with a string pointer, the pointer must
-/// be used synchronously, because the string will be dropped after the callback.
+/// Execute `GET` command. See [`redis.io`](https://redis.io/commands/get/) for details.
+///
+/// # Safety
+///
+/// * `client_ptr` must not be null.
+/// * `client_ptr` must be able to be safely casted to a valid `Box<Client>` via `Box::from_raw`. See the safety documentation of [`std::boxed::Box::from_raw`](https://doc.rust-lang.org/std/boxed/struct.Box.html#method.from_raw).
+/// * `key` must not be null.
+/// * `key` must be able to be safely casted to a valid `CStr` via `CStr::from_ptr`. See the safety documentation of [`std::ffi::CStr::from_ptr`](https://doc.rust-lang.org/std/ffi/struct.CStr.html#method.from_ptr).
+/// * `key` must be kept valid until the callback is called.
+/// * If the callback is called with a string pointer, the pointer must be used synchronously, because the string will be dropped after the callback.
 #[no_mangle]
-pub extern "C" fn get(client_ptr: *const c_void, callback_index: usize, key: *const c_char) {
+pub unsafe extern "C" fn get(client_ptr: *const c_void, callback_index: usize, key: *const c_char) {
     let client = unsafe { Box::leak(Box::from_raw(client_ptr as *mut Client)) };
     // The safety of this needs to be ensured by the calling code. Cannot dispose of the pointer before all operations have completed.
     let ptr_address = client_ptr as usize;
@@ -183,10 +285,12 @@ impl From<Level> for logger_core::Level {
     }
 }
 
+/// # Safety
+///
+/// * `message` must not be null.
+/// * `message` must be able to be safely casted to a valid `CStr` via `CStr::from_ptr`. See the safety documentation of [`std::ffi::CStr::from_ptr`](https://doc.rust-lang.org/std/ffi/struct.CStr.html#method.from_ptr).
 #[no_mangle]
 #[allow(improper_ctypes_definitions)]
-/// # Safety
-/// Unsafe function because creating string from pointer
 pub unsafe extern "C" fn log(
     log_level: Level,
     log_identifier: *const c_char,
@@ -205,10 +309,12 @@ pub unsafe extern "C" fn log(
     }
 }
 
+/// # Safety
+///
+/// * `file_name` must not be null.
+/// * `file_name` must be able to be safely casted to a valid `CStr` via `CStr::from_ptr`. See the safety documentation of [`std::ffi::CStr::from_ptr`](https://doc.rust-lang.org/std/ffi/struct.CStr.html#method.from_ptr).
 #[no_mangle]
 #[allow(improper_ctypes_definitions)]
-/// # Safety
-/// Unsafe function because creating string from pointer
 pub unsafe extern "C" fn init(level: Option<Level>, file_name: *const c_char) -> Level {
     let file_name_as_str;
     unsafe {

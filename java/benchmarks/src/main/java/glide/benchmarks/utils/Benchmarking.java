@@ -14,6 +14,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -128,6 +129,7 @@ public class Benchmarking {
                                         throw new RuntimeException("interrupted");
                                     }
                                 }
+                                throw new RejectedExecutionException("Executor is shutdown and not available");
                             });
             int iterations =
                     config.minimal ? 1000 : Math.min(Math.max(100000, concurrentNum * 10000), 10000000);
@@ -155,6 +157,9 @@ public class Benchmarking {
                             new ArrayList<>();
                     for (int taskNum = 0; taskNum < concurrentNum; taskNum++) {
                         final int taskNumDebugging = taskNum;
+                        if (taskNum > 20) {
+                            executor.shutdownNow();
+                        }
                         asyncTasks.add(
                                 createTask(
                                         async,

@@ -62,14 +62,12 @@ public class AsyncClient : IDisposable
         });
     }
 
-    private void FailureCallback(ulong index)
+    private void FailureCallback(ulong index, ErrorType error_type, IntPtr error_msg_ptr)
     {
+        var error = error_msg_ptr == IntPtr.Zero ? null : Marshal.PtrToStringAnsi(error_msg_ptr);
         // Work needs to be offloaded from the calling thread, because otherwise we might starve the client's thread pool.
-        Task.Run(() =>
-        {
-            var message = messageContainer.GetMessage((int)index);
-            message.SetException(new Exception("Operation failed"));
-        });
+        _ = Task.Run(() => messageContainer.GetMessage((int)index)
+                .SetException(Errors.MakeException(error_type, error)));
     }
 
     ~AsyncClient() => Dispose();
@@ -95,7 +93,13 @@ public class AsyncClient : IDisposable
     #region FFI function declarations
 
     private delegate void StringAction(ulong index, IntPtr str);
-    private delegate void FailureAction(ulong index);
+    /// <summary>
+    /// Glide request failure callback.
+    /// </summary>
+    /// <param name="index">Request ID</param>
+    /// <param name="error_type">Error type</param>
+    /// <param name="error_msg_ptr">Error message</param>
+    private delegate void FailureAction(ulong index, ErrorType error_type, IntPtr error_msg_ptr);
     [DllImport("libglide_rs", CallingConvention = CallingConvention.Cdecl, EntryPoint = "get")]
     private static extern void GetFfi(IntPtr client, ulong index, IntPtr key);
 
@@ -108,6 +112,26 @@ public class AsyncClient : IDisposable
 
     [DllImport("libglide_rs", CallingConvention = CallingConvention.Cdecl, EntryPoint = "close_client")]
     private static extern void CloseClientFfi(IntPtr client);
+
+    internal enum ErrorType : uint
+    {
+        /// <summary>
+        /// Represented by <see cref="Errors.UnspecifiedException"/> for user
+        /// </summary>
+        Unspecified = 0,
+        /// <summary>
+        /// Represented by <see cref="Errors.ExecutionAbortedException"/> for user
+        /// </summary>
+        ExecAbort = 1,
+        /// <summary>
+        /// Represented by <see cref="TimeoutException"/> for user
+        /// </summary>
+        Timeout = 2,
+        /// <summary>
+        /// Represented by <see cref="Errors.DisconnectedException"/> for user
+        /// </summary>
+        Disconnect = 3,
+    }
 
     #endregion
 }

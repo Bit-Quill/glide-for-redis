@@ -15,77 +15,30 @@ use Symfony\Component\Lock\Store\SemaphoreStore;
 
 use function Amp\async;
 
-// use function Amp\delay;
+$channels = [];
 
 class RedisClient
 {
-    protected static $ffi;
+    // use Amp\Sync\Mutex instead
     protected static $lock;
+    protected FFI $ffi;
+    private static int $nextIndex = 0;
 
     /**
-     * @var Connection
+     * Client object provided
+     * @var FFI\CData
      */
-    protected Connection $connection;
-
-    /**
-     * @var AsyncCommandTransport
-     */
-    protected AsyncCommandTransport $asyncCommandTransport;
+    protected FFI\CData $clientPtr;
 
     /**
      * @var PromiseContainer
      */
-    protected PromiseContainer $promiseContainer;
+    public PromiseContainer $promiseContainer;
 
-    protected function successCallback(): \Closure
-    {
-        return function (int $index, ?string $message) {
-
-            echo memory_get_usage() . PHP_EOL;
-            $messageCpy = null;
-            if (is_array($message)) {
-                print "DETECTED AS AN ARRAY" . PHP_EOL;
-                var_dump($message);
-            }
-            if ($message != null) {
-                $messageCpy = preg_replace('/[[:^print:]]/', '', $message);
-                print "SUCCESS(idx: $index, msg: $messageCpy)" . PHP_EOL;
-            } else {
-                print "SUCCESS(idx: $index)" . PHP_EOL;
-            }
-            echo memory_get_usage() . PHP_EOL;
-
-            $promise = $this->promiseContainer->getPromise($index);
-            // mark the async operation as complete
-            if ($messageCpy == null) {
-                $promise->complete("OK");
-            } else {
-                $promise->complete($messageCpy);
-            }
-
-            if (RedisClient::$lock->acquire()) {
-                $this->promiseContainer->freePromise($index);
-                RedisClient::$lock->release();
-            }
-        };
-    }
-
-    protected function failureCallback(): \Closure
-    {
-        return function (int $index) {
-            $indexCpy = $index;
-            print "FAILURE (idx: $indexCpy)" . PHP_EOL;
-
-            $promise = $this->promiseContainer->getPromise($index);
-            if (!isset($promise)) {
-                // something went wrong!
-                throw new ErrorException("Promise not available");
-            }
-            // mark the async operation as error with a request error
-            $promise->error(new ErrorException("Request Error"));
-            $this->promiseContainer->freePromise($index);
-        };
-    }
+    /**
+     * @var array
+     */
+    protected array $channels;
 
     /**
      * @param $host string
@@ -95,15 +48,11 @@ class RedisClient
      */
     public function __construct($host, $port, $useTls)
     {
-        // TODO move to static initiation
-        if (RedisClient::$ffi == null) {
-            $header = file_get_contents('target/debug/glide_rs.h');
-            RedisClient::$ffi = FFI::cdef(
-                $header,
-                'target/debug/libglide_rs.dylib'
-            );
-        }
-        $ffi = RedisClient::$ffi;
+        $header = file_get_contents('target/debug/glide_rs.h');
+        $this->ffi = FFI::cdef(
+            $header,
+            'target/debug/libglide_rs.dylib'
+        );
 
         // TODO move to static initiation
         if (RedisClient::$lock == null) {
@@ -112,82 +61,120 @@ class RedisClient
             RedisClient::$lock = $factory->createLock('promise-lock');
         }
 
-        // connect to Redis
+        $this->channels = array();
+        $channels = &$this->channels;
+
+        $successCallback = function ($index, $message) use (&$channels) {
+            // spawn callback in a separate thread
+            async(function () use ($index, $message, &$channels) {
+                if ($message != null) {
+                    print "SUCCESS(idx: $index, msg: $message)" . PHP_EOL;
+                } else {
+                    print "SUCCESS(idx: $index)" . PHP_EOL;
+                    $message = "OK";
+                }
+                try {
+                    $channel = $channels[$index][1];
+                    if (!$channel->isClosed()) {
+                        delay(2);
+                        $channel->send($message);
+                    } else {
+                        throw new \Amp\Sync\ChannelException("Channel unexpectedly closed");
+                    }
+                } catch (\Amp\Sync\ChannelException $e) {
+                    print "Unable to send: ChannelException $e" . PHP_EOL;
+                } catch (\Amp\Serialization\SerializationException $e) {
+                    print "Unable to send: SerializationException $e" . PHP_EOL;
+                }
+            });
+        };
+
+        $failureCallback = function (int $index) {
+            // spawn callback in a separate thread
+            async(function () use ($index, &$channels) {
+                $indexCpy = $index;
+                print "FAILURE (idx: $indexCpy)" . PHP_EOL;
+
+                // TODO handle error case
+            });
+        };
 
         // TODO move this work to the Connection class
         // TODO apply async promises
         // TODO update to use protobuf connection objects
-        $client = $ffi->create_client(
+        $this->clientPtr = $this->ffi->create_client(
             $host,
             $port,
             $useTls,
-            $this->successCallback(),
-            $this->failureCallback()
+            $successCallback,
+            $failureCallback
         );
-        var_dump($client);
 
-        if ($client == null) {
+        if ($this->clientPtr == null) {
             throw new ErrorException("Failed creating a client");
         }
-
-        // TODO return a promise of a client connection
-        $this->connection = new Connection(
-            $client,
-            $this->successCallback(),
-            $this->failureCallback()
-        );
-
-        $this->asyncCommandTransport = new AsyncCommandTransport();
-        $this->promiseContainer = new PromiseContainer();
     }
 
     public function close()
     {
         print "Closing client" . PHP_EOL;
-        RedisClient::$ffi->close_client($this->connection->getClient());
+        $this->ffi->close_client($this->clientPtr);
+        foreach ($this->channels as $channel) {
+            [$left, $right] = $channel;
+            $left->close();
+            $right->close();
+        }
     }
 
     public function set($key, $value): Future
     {
-        $deferredFuture = new DeferredFuture();
-        $client = $this->connection->getClient();
+        $getFunction = function ($key, $value, $callbackId, \Amp\Sync\Channel $channel, $client, $ffi) {
+            print "call ffi->set ($callbackId)" . PHP_EOL;
+            $ffi->set($client, $callbackId, $key, $value);
+
+            try {
+                return $channel->receive(new \Amp\TimeoutCancellation(5));
+            } catch (\Amp\Sync\ChannelException $e) {
+                print "Unable to receive: ChannelException $e" . PHP_EOL;
+            } catch (\Amp\Serialization\SerializationException $e) {
+                print "Unable to receive: SerializationException $e" . PHP_EOL;
+            }
+            return "OK";
+        };
 
         $callbackId = 0;
         if (RedisClient::$lock->acquire()) {
-            $callbackId = $this->promiseContainer->getFreeCallbackId();
-            print "savePromise($callbackId, future)" . PHP_EOL;
-            $this->promiseContainer->savePromise($callbackId, $deferredFuture);
-
+            $callbackId = self::$nextIndex++;
             RedisClient::$lock->release();
         }
+        $this->channels[$callbackId] = createChannelPair();
 
-        $callbackIdCData = RedisClient::$ffi->new();
-        $callbackIdCData->cdata = $callbackId;
-        $keyCData = RedisClient::$ffi->new('const char *');
-        $keyCData->cdata = $key;
-        $valueCData = RedisClient::$ffi->new('const char *');
-        $valueCData->cdata = $value;
-        RedisClient::$ffi->set($client, $callbackIdCData, $keyCData, $valueCData);
-
-        return $deferredFuture->getFuture();
+        return \Amp\async($getFunction, $key, $value, $callbackId, $this->channels[$callbackId][0], $this->clientPtr, $this->ffi);
     }
 
     public function get($key): Future
     {
-        $deferredFuture = new DeferredFuture();
-        $client = $this->connection->getClient();
+        $getFunction = function ($key, $callbackId, \Amp\Sync\Channel $channel, $client, $ffi) {
+            print "call ffi->get ($callbackId)" . PHP_EOL;
+            $ffi->get($client, $callbackId, $key);
+
+            try {
+                return $channel->receive(new \Amp\TimeoutCancellation(5));
+            } catch (\Amp\Sync\ChannelException $e) {
+                print "Unable to receive: ChannelException $e" . PHP_EOL;
+            } catch (\Amp\Serialization\SerializationException $e) {
+                print "Unable to receive: SerializationException $e" . PHP_EOL;
+            }
+            return "OK";
+        };
 
         $callbackId = 0;
         if (RedisClient::$lock->acquire()) {
-            $callbackId = $this->promiseContainer->getFreeCallbackId();
-            print "savePromise($callbackId, future)" . PHP_EOL;
-            $this->promiseContainer->savePromise($callbackId, $deferredFuture);
-
+            $callbackId = self::$nextIndex++;
             RedisClient::$lock->release();
         }
+        $this->channels[$callbackId] = createChannelPair();
 
-        RedisClient::$ffi->get($client, $callbackId, $key);
-
-        return $deferredFuture->getFuture();
+        return \Amp\async($getFunction, $key, $callbackId, $this->channels[$callbackId][0], $this->clientPtr, $this->ffi);
     }
 }

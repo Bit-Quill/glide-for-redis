@@ -112,6 +112,7 @@ mod cluster_client_tests {
                 .await
                 .unwrap();
             let info = redis::from_owned_redis_value::<HashMap<String, String>>(info).unwrap();
+
             let (primaries, replicas) = count_primaries_and_replicas(info);
             assert_eq!(primaries, 3);
             assert_eq!(replicas, 3);
@@ -142,6 +143,8 @@ mod cluster_client_tests {
                 .await
                 .unwrap();
             let info = redis::from_owned_redis_value::<String>(info).unwrap();
+            dbg!("=====");
+            dbg!(info.clone());
             let (primaries, replicas) = count_primary_or_replica(&info);
             assert_eq!(primaries, 1);
             assert_eq!(replicas, 0);
@@ -176,6 +179,8 @@ mod cluster_client_tests {
                 .await
                 .unwrap();
             let info = redis::from_owned_redis_value::<String>(info).unwrap();
+            dbg!("=====");
+            dbg!(info.clone());
             let (primaries, replicas) = count_primary_or_replica(&info);
             assert_eq!(primaries, 0);
             assert_eq!(replicas, 1);
@@ -210,6 +215,8 @@ mod cluster_client_tests {
                 .await
                 .unwrap();
             let info = redis::from_owned_redis_value::<String>(info).unwrap();
+            dbg!("=====");
+            dbg!(info.clone());
             let (primaries, replicas) = count_primary_or_replica(&info);
             assert_eq!(primaries, 0);
             assert_eq!(replicas, 1);

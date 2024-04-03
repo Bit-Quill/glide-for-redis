@@ -2,7 +2,6 @@ name: Java CI
 
 on:
     push:
-        branches: ["main"]
         paths:
             - glide-core/src/**
             - submodules/**
@@ -65,7 +64,7 @@ jobs:
                   github-token: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Install protoc (protobuf)
-              uses: arduino/setup-protoc@v4
+              uses: arduino/setup-protoc@v3
               with:
                   version: "26.0"
                   repo-token: ${{ inputs.github-token }}
@@ -138,7 +137,7 @@ jobs:
                   github-token: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Install protoc (protobuf)
-              uses: arduino/setup-protoc@v4
+              uses: arduino/setup-protoc@v3
               with:
                   version: "26.0"
                   repo-token: ${{ inputs.github-token }}

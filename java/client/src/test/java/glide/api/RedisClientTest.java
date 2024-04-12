@@ -4,6 +4,7 @@ package glide.api;
 import static glide.api.BaseClient.OK;
 import static glide.api.commands.SortedSetBaseCommands.WITH_SCORES_REDIS_API;
 import static glide.api.commands.SortedSetBaseCommands.WITH_SCORE_REDIS_API;
+import static glide.api.models.commands.InfoOptions.Section.SERVER;
 import static glide.api.models.commands.LInsertOptions.InsertPosition.BEFORE;
 import static glide.api.models.commands.SetOptions.ConditionalSet.ONLY_IF_DOES_NOT_EXIST;
 import static glide.api.models.commands.SetOptions.ConditionalSet.ONLY_IF_EXISTS;
@@ -129,21 +130,30 @@ import glide.api.models.commands.StreamAddOptions;
 import glide.api.models.commands.ZaddOptions;
 import glide.managers.CommandManager;
 import glide.managers.ConnectionManager;
+
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
 import lombok.SneakyThrows;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.tuple.Pair;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import redis_request.RedisRequestOuterClass.RequestType;
 
+// ./gradlew :client:test --tests RedisClientTest --debug-jvm
 public class RedisClientTest {
 
     RedisClient service;
@@ -158,6 +168,162 @@ public class RedisClientTest {
         commandManager = mock(CommandManager.class);
         service = new RedisClient(connectionManager, commandManager);
     }
+
+
+    static RedisClient service1;
+    static CommandManager commandManager1;
+
+    @BeforeAll
+    public static void setUpStatic() {
+        commandManager1 = mock(CommandManager.class);
+        service1 = new RedisClient(null, commandManager1);
+    }
+
+    private static String[] strs(String... args) {
+        return args;
+    }
+
+    private static String[] strs(Object... args) {
+        return Arrays.stream(args).map(Object::toString).toArray(String[]::new);
+    }
+
+    private static Object[] objs(Object... args) {
+        return args;
+    }
+
+    private static Object[] objss(Object arg) {
+        return new Object[] { arg };
+    }
+
+    private static Stream<Arguments> getSamplesForTest1() {
+        return Stream.of(
+          Arguments.of(CustomCommand, (Object) "testValue",
+              (Supplier<?>) () -> service1.customCommand(strs("GET", "testKey" )), strs("GET", "testKey")),
+            Arguments.of(Ping, "PONG", (Supplier<?>) () -> service1.ping(), strs()),
+            Arguments.of(Ping, "PIPIPING", (Supplier<?>) () -> service1.ping("PIPIPING"), strs("PIPIPING")),
+            Arguments.of(Info, "## INFO ##", (Supplier<?>) () -> service1.info(), strs()),
+            Arguments.of(Info, "## INFO ##", (Supplier<?>) () -> service1.info(InfoOptions.builder().section(SERVER).build()), strs("SERVER")),
+            Arguments.of(Select, OK, (Supplier<?>) () -> service1.select(42), strs("42")),
+            Arguments.of(Del, 2, (Supplier<?>) () -> service1.del(strs("1", "2")), strs("1", "2")),
+            Arguments.of(Unlink, 2, (Supplier<?>) () -> service1.unlink(strs("1", "2")), strs("1", "2")),
+
+            Arguments.of(ZPopMax, Map.of("member1", 2.5), (Supplier<?>) () -> service1.zpopmax("key"), strs("key"))
+        );
+    }
+
+    @SneakyThrows
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("getSamplesForTest1")
+    public <T> void test1(RequestType requestType,
+                           T responseSample,
+                           Supplier<CompletableFuture<T>> command,
+                           String... arguments) {
+        // setup
+        CompletableFuture<T> testResponse = new CompletableFuture<>();
+        testResponse.complete(responseSample);
+
+        // match on protobuf request
+        when(commandManager1.<T>submitNewCommand(eq(requestType), eq(arguments), any()))
+            .thenReturn(testResponse);
+
+        // exercise
+        CompletableFuture<T> response = command.get();
+        T payload = response.get();
+
+        // verify
+        assertEquals(testResponse, response);
+        assertEquals(responseSample, payload);
+    }
+
+    private static Stream<Arguments> getSamplesForTest2() {
+        return Stream.of(new Arguments[] {
+            Arguments.of(CustomCommand, (Object) "testValue", new Object[] { strs("GET", "testKey")}, strs("GET", "testKey")),
+            Arguments.of(Ping, "PONG", objs(), strs()),
+            Arguments.of(Ping, "PIPIPING", objs("PIPIPING"), strs("PIPIPING")),
+            Arguments.of(Info, "## INFO ##", objs(), strs()),
+            Arguments.of(Info, "## INFO ##", objs(InfoOptions.builder().section(SERVER).build()), strs("SERVER")),
+            Arguments.of(Select, OK, objs(42L), strs(42)),
+            Arguments.of(Del, 2, objss(strs("1", "2")), strs(1, 2)),
+            Arguments.of(Unlink, 2, objss(strs("1", "2")), strs(1, 2)),
+
+
+            Arguments.of(ZPopMax, Map.of("member1", 2.5), objs("testKey"), strs("testKey")),
+        });
+    }
+
+    @SneakyThrows
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("getSamplesForTest2")
+    public <T> void test2(RequestType requestType,
+                           T responseSample,
+                           Object[] functionArgs,
+                           String[] commandArgs) {
+        // setup
+        CompletableFuture<T> testResponse = new CompletableFuture<>();
+        testResponse.complete(responseSample);
+
+        // match on protobuf request
+        when(commandManager1.<T>submitNewCommand(eq(requestType), eq(commandArgs), any()))
+            .thenReturn(testResponse);
+
+        var mtd = Arrays.stream(RedisClient.class.getMethods()).filter(m -> m.getName().equals("select")).collect(Collectors.toList()).get(0);
+
+        Map<Class<?>, Class<?>> mapOfPrimitives = Map.of(
+            Long.class, long.class,
+            Double.class, double.class
+        );
+
+        Class<?>[] paramTypes = Arrays.stream(functionArgs)
+            .map(Object::getClass)
+            .map(c -> mapOfPrimitives.getOrDefault(c, c))
+            .toArray(Class[]::new);
+
+        var method = Arrays.stream(RedisClient.class.getMethods())
+            .filter(m -> m.getName().equalsIgnoreCase(requestType.toString().toLowerCase()))
+            .filter(m -> Arrays.equals(m.getParameterTypes(), paramTypes))
+            .collect(Collectors.toList()).get(0);
+
+        // exercise
+        @SuppressWarnings("unchecked")
+        CompletableFuture<T> response = (CompletableFuture<T>)method.invoke(service1, functionArgs);
+        T payload = response.get();
+
+        // verify
+        assertEquals(testResponse, response);
+        assertEquals(responseSample, payload);
+    }
+/*
+    @Test
+    public void testtttttttttttttttttttttttttt() {
+        String key = "testKey";
+        test1(ZPopMax, Map.of("member1", 2.5), () -> service.zpopmax(key), key);
+        test2(ZPopMax, Map.of("member1", 2.5), new Object[] { key }, new String[] { key });
+    }
+*/
+    @SneakyThrows
+    @Test
+    public void zzpop_returns_success() {
+        // setup
+        String key = "testKey";
+        String[] arguments = new String[] {key};
+        Map<String, Double> value = Map.of("member1", 2.5);
+
+        CompletableFuture<Map<String, Double>> testResponse = new CompletableFuture<>();
+        testResponse.complete(value);
+
+        // match on protobuf request
+        when(commandManager.<Map<String, Double>>submitNewCommand(eq(ZPopMax), eq(arguments), any()))
+            .thenReturn(testResponse);
+
+        // exercise
+        CompletableFuture<Map<String, Double>> response = service.zpopmax(key);
+        Map<String, Double> payload = response.get();
+
+        // verify
+        assertEquals(testResponse, response);
+        assertEquals(value, payload);
+    }
+
 
     @SneakyThrows
     @Test

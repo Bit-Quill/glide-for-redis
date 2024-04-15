@@ -2959,7 +2959,7 @@ public class RedisClientTest {
 
         // verify
         assertEquals(testResponse, response);
-        assertEquals(payload, response.get());
+        assertEquals(value, payload);
     }
 
     @SneakyThrows

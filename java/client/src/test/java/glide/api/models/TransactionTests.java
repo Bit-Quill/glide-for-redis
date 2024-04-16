@@ -69,9 +69,9 @@ import static redis_request.RedisRequestOuterClass.RequestType.RPush;
 import static redis_request.RedisRequestOuterClass.RequestType.RPushX;
 import static redis_request.RedisRequestOuterClass.RequestType.SAdd;
 import static redis_request.RedisRequestOuterClass.RequestType.SCard;
+import static redis_request.RedisRequestOuterClass.RequestType.SInter;
 import static redis_request.RedisRequestOuterClass.RequestType.SInterStore;
 import static redis_request.RedisRequestOuterClass.RequestType.SIsMember;
-import static redis_request.RedisRequestOuterClass.RequestType.SInter;
 import static redis_request.RedisRequestOuterClass.RequestType.SMembers;
 import static redis_request.RedisRequestOuterClass.RequestType.SMove;
 import static redis_request.RedisRequestOuterClass.RequestType.SRem;
@@ -485,9 +485,6 @@ public class TransactionTests {
                 Pair.of(
                         PfMerge,
                         ArgsArray.newBuilder().addArgs("hll").addArgs("hll1").addArgs("hll2").build()));
-
-        transaction.sinter(new String[] {"key1", "key2"});
-        results.add(Pair.of(SInter, ArgsArray.newBuilder().addArgs("key1").addArgs("key2").build()));
 
         var protobufTransaction = transaction.getProtobufTransaction().build();
 

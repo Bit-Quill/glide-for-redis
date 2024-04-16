@@ -84,9 +84,9 @@ import static redis_request.RedisRequestOuterClass.RequestType.RPush;
 import static redis_request.RedisRequestOuterClass.RequestType.RPushX;
 import static redis_request.RedisRequestOuterClass.RequestType.SAdd;
 import static redis_request.RedisRequestOuterClass.RequestType.SCard;
+import static redis_request.RedisRequestOuterClass.RequestType.SInter;
 import static redis_request.RedisRequestOuterClass.RequestType.SInterStore;
 import static redis_request.RedisRequestOuterClass.RequestType.SIsMember;
-import static redis_request.RedisRequestOuterClass.RequestType.SInter;
 import static redis_request.RedisRequestOuterClass.RequestType.SMembers;
 import static redis_request.RedisRequestOuterClass.RequestType.SMove;
 import static redis_request.RedisRequestOuterClass.RequestType.SRem;
@@ -1770,7 +1770,7 @@ public class RedisClientTest {
 
         // match on protobuf request
         when(commandManager.<Set<String>>submitNewCommand(eq(SInter), eq(keys), any()))
-            .thenReturn(testResponse);
+                .thenReturn(testResponse);
 
         // exercise
         CompletableFuture<Set<String>> response = service.sinter(keys);
@@ -2942,6 +2942,7 @@ public class RedisClientTest {
         assertEquals(value, payload);
     }
 
+
     @SneakyThrows
     @Test
     public void time_returns_success() {
@@ -2949,17 +2950,15 @@ public class RedisClientTest {
         CompletableFuture<String[]> testResponse = new CompletableFuture<>();
         String[] payload = new String[] {"UnixTime", "ms"};
         testResponse.complete(payload);
-
         // match on protobuf request
         when(commandManager.<String[]>submitNewCommand(eq(Time), eq(new String[0]), any()))
-                .thenReturn(testResponse);
-
+            .thenReturn(testResponse);
         // exercise
         CompletableFuture<String[]> response = service.time();
 
         // verify
         assertEquals(testResponse, response);
-        assertEquals(value, payload);
+        assertEquals(payload, response.get());
     }
 
     @SneakyThrows

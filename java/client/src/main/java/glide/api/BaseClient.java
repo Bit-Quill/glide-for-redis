@@ -9,6 +9,7 @@ import static glide.utils.ArrayTransformUtils.convertMapToValueKeyStringArray;
 import static redis_request.RedisRequestOuterClass.RequestType.BZPopMax;
 import static redis_request.RedisRequestOuterClass.RequestType.Blpop;
 import static redis_request.RedisRequestOuterClass.RequestType.Brpop;
+import static redis_request.RedisRequestOuterClass.RequestType.ClientInfo;
 import static redis_request.RedisRequestOuterClass.RequestType.Decr;
 import static redis_request.RedisRequestOuterClass.RequestType.DecrBy;
 import static redis_request.RedisRequestOuterClass.RequestType.Del;
@@ -1011,5 +1012,10 @@ public abstract class BaseClient
             @NonNull String destination, @NonNull String[] sourceKeys) {
         String[] arguments = ArrayUtils.addFirst(sourceKeys, destination);
         return commandManager.submitNewCommand(PfMerge, arguments, this::handleStringResponse);
+    }
+
+    @Override
+    public CompletableFuture<String> clientInfo() {
+        return commandManager.submitNewCommand(ClientInfo, new String[0], this::handleStringResponse);
     }
 }

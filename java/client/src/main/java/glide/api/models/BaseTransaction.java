@@ -13,6 +13,7 @@ import static redis_request.RedisRequestOuterClass.RequestType.Blpop;
 import static redis_request.RedisRequestOuterClass.RequestType.Brpop;
 import static redis_request.RedisRequestOuterClass.RequestType.ClientGetName;
 import static redis_request.RedisRequestOuterClass.RequestType.ClientId;
+import static redis_request.RedisRequestOuterClass.RequestType.ClientInfo;
 import static redis_request.RedisRequestOuterClass.RequestType.ConfigGet;
 import static redis_request.RedisRequestOuterClass.RequestType.ConfigResetStat;
 import static redis_request.RedisRequestOuterClass.RequestType.ConfigRewrite;
@@ -2373,6 +2374,17 @@ public abstract class BaseTransaction<T extends BaseTransaction<T>> {
     public T objectRefcount(@NonNull String key) {
         ArgsArray commandArgs = buildArgs(key);
         protobufTransaction.addCommands(buildCommand(ObjectRefcount, commandArgs));
+        return getThis();
+    }
+
+    /**
+     * Returns information and statistics about the current client connection in a mostly human readable format.
+     *
+     * @see <a href="https://redis.io/commands/client-info/">redis.io</a> for details.
+     * @return Command response - Returns information and statistics about the current client connection.
+     */
+    public T clientInfo() {
+        protobufTransaction.addCommands(buildCommand(ClientInfo, buildArgs()));
         return getThis();
     }
 

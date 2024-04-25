@@ -407,4 +407,17 @@ public interface GenericBaseCommands {
      * }</pre>
      */
     CompletableFuture<Long> objectRefcount(String key);
+
+    /**
+     * Returns information and statistics about the current client connection in a mostly human readable format.
+     *
+     * @see <a href="https://redis.io/commands/client-info/">redis.io</a> for details.
+     * @return Returns information and statistics about the current client connection.
+     * @example
+     *     <pre>{@code
+     * String info = client.clientInfo().get();
+     * System.out.println(info);
+     * }</pre>
+     */
+    CompletableFuture<String> clientInfo();
 }

@@ -19,6 +19,7 @@ import static redis_request.RedisRequestOuterClass.RequestType.Blpop;
 import static redis_request.RedisRequestOuterClass.RequestType.Brpop;
 import static redis_request.RedisRequestOuterClass.RequestType.ClientGetName;
 import static redis_request.RedisRequestOuterClass.RequestType.ClientId;
+import static redis_request.RedisRequestOuterClass.RequestType.ClientInfo;
 import static redis_request.RedisRequestOuterClass.RequestType.ConfigGet;
 import static redis_request.RedisRequestOuterClass.RequestType.ConfigResetStat;
 import static redis_request.RedisRequestOuterClass.RequestType.ConfigRewrite;
@@ -334,6 +335,9 @@ public class TransactionTests {
 
         transaction.clientId();
         results.add(Pair.of(ClientId, buildArgs()));
+
+        transaction.clientInfo();
+        results.add(Pair.of(ClientInfo, buildArgs()));
 
         transaction.clientGetName();
         results.add(Pair.of(ClientGetName, buildArgs()));

@@ -33,6 +33,7 @@ import static redis_request.RedisRequestOuterClass.RequestType.Blpop;
 import static redis_request.RedisRequestOuterClass.RequestType.Brpop;
 import static redis_request.RedisRequestOuterClass.RequestType.ClientGetName;
 import static redis_request.RedisRequestOuterClass.RequestType.ClientId;
+import static redis_request.RedisRequestOuterClass.RequestType.ClientInfo;
 import static redis_request.RedisRequestOuterClass.RequestType.ConfigGet;
 import static redis_request.RedisRequestOuterClass.RequestType.ConfigResetStat;
 import static redis_request.RedisRequestOuterClass.RequestType.ConfigRewrite;
@@ -3441,5 +3442,27 @@ public class RedisClientTest {
         // verify
         assertEquals(testResponse, response);
         assertEquals(refcount, payload);
+    }
+
+    @SneakyThrows
+    @Test
+    public void clientInfo_returns_success() {
+        // setup
+        String key = "testKey";
+        String info = "testInfo";
+        CompletableFuture<String> testResponse = new CompletableFuture<>();
+        testResponse.complete(info);
+
+        // match on protobuf request
+        when(commandManager.<String>submitNewCommand(eq(ClientInfo), eq(new String[] {}), any()))
+            .thenReturn(testResponse);
+
+        // exercise
+        CompletableFuture<String> response = service.clientInfo();
+        String payload = response.get();
+
+        // verify
+        assertEquals(testResponse, response);
+        assertEquals(info, payload);
     }
 }

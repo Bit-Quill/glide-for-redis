@@ -34,7 +34,7 @@ public class ClusterClientTests {
                 RedisClusterClient.CreateClient(commonClusterClientConfig().build()).get();
 
         String info =
-                (String) client.customCommand(new String[] {"CLIENT", "INFO"}).get().getSingleValue();
+                client.clientInfo().get();
         assertTrue(info.contains("lib-name=GlideJava"));
         assertTrue(info.contains("lib-ver=unknown"));
 
@@ -141,7 +141,7 @@ public class ClusterClientTests {
                         .get();
 
         String clientInfo =
-                (String) client.customCommand(new String[] {"CLIENT", "INFO"}).get().getSingleValue();
+                client.clientInfo().get();
         assertTrue(clientInfo.contains("name=TEST_CLIENT_NAME"));
 
         client.close();

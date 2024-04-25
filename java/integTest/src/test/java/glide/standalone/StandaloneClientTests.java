@@ -32,7 +32,7 @@ public class StandaloneClientTests {
 
         RedisClient client = RedisClient.CreateClient(commonClientConfig().build()).get();
 
-        String info = (String) client.customCommand(new String[] {"CLIENT", "INFO"}).get();
+        String info = client.clientInfo().get();
         assertTrue(info.contains("lib-name=GlideJava"));
         assertTrue(info.contains("lib-ver=unknown"));
 
@@ -131,7 +131,7 @@ public class StandaloneClientTests {
     public void select_standalone_database_id() {
         RedisClient client = RedisClient.CreateClient(commonClientConfig().databaseId(4).build()).get();
 
-        String clientInfo = (String) client.customCommand(new String[] {"CLIENT", "INFO"}).get();
+        String clientInfo = client.clientInfo().get();
         assertTrue(clientInfo.contains("db=4"));
 
         client.close();
@@ -143,7 +143,7 @@ public class StandaloneClientTests {
         RedisClient client =
                 RedisClient.CreateClient(commonClientConfig().clientName("TEST_CLIENT_NAME").build()).get();
 
-        String clientInfo = (String) client.customCommand(new String[] {"CLIENT", "INFO"}).get();
+        String clientInfo = client.clientInfo().get();
         assertTrue(clientInfo.contains("name=TEST_CLIENT_NAME"));
 
         client.close();

@@ -105,4 +105,11 @@ public class ClusterTransactionTests {
     //    assertEquals(OK, response[0]);
     //    assertTrue((long) response[1] >= 0L);
     // }
+
+    @Test
+    @SneakyThrows
+    public void clientInfo() {
+        var response = clusterClient.exec(new ClusterTransaction().clientInfo()).get();
+        assertTrue(((String) response[0]).contains("cmd=client|info"));
+    }
 }

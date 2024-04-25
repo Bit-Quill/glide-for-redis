@@ -2800,4 +2800,41 @@ public class SharedCommandTests {
         assertEquals(OK, client.set(key, "").get());
         assertTrue(client.objectRefcount(key).get() >= 0L);
     }
+
+    @SneakyThrows
+    @ParameterizedTest(autoCloseArguments = false)
+    @MethodSource("getClients")
+    public void clientInfo(BaseClient client) {
+        String info = client.clientInfo().get();
+        assertTrue(info.contains("id="));
+        assertTrue(info.contains("addr="));
+        assertTrue(info.contains("laddr="));
+        assertTrue(info.contains("fd="));
+        assertTrue(info.contains("name="));
+        assertTrue(info.contains("age="));
+        assertTrue(info.contains("idle="));
+        assertTrue(info.contains("flags="));
+        assertTrue(info.contains("db="));
+        assertTrue(info.contains("sub="));
+        assertTrue(info.contains("psub="));
+        assertTrue(info.contains("ssub="));
+        assertTrue(info.contains("multi="));
+        assertTrue(info.contains("qbuf="));
+        assertTrue(info.contains("qbuf-free="));
+        assertTrue(info.contains("argv-mem="));
+        assertTrue(info.contains("multi-mem="));
+        assertTrue(info.contains("rbs="));
+        assertTrue(info.contains("rbp="));
+        assertTrue(info.contains("obl="));
+        assertTrue(info.contains("oll="));
+        assertTrue(info.contains("omem="));
+        assertTrue(info.contains("tot-mem="));
+        assertTrue(info.contains("events="));
+        assertTrue(info.contains("cmd=client|info"));
+        assertTrue(info.contains("user="));
+        assertTrue(info.contains("redir="));
+        assertTrue(info.contains("resp="));
+        assertTrue(info.contains("lib-name="));
+        assertTrue(info.contains("ver="));
+    }
 }

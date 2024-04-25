@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import glide.TestConfiguration;
 import glide.api.RedisClient;
+import glide.api.models.ClusterTransaction;
 import glide.api.models.Transaction;
 import glide.api.models.commands.InfoOptions;
 import glide.api.models.configuration.NodeAddress;
@@ -132,5 +133,12 @@ public class TransactionTests {
         var response = client.exec(transaction).get();
         assertEquals(OK, response[0]);
         assertTrue((long) response[1] >= 0L);
+    }
+
+    @Test
+    @SneakyThrows
+    public void clientInfo() {
+        var response = client.exec(new Transaction().clientInfo()).get();
+        assertTrue(((String) response[0]).contains("cmd=client|info"));
     }
 }

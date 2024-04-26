@@ -2,6 +2,7 @@ import java.nio.file.Paths
 
 plugins {
     id 'java-library'
+    id 'maven-publish'
 }
 
 repositories {
@@ -143,8 +144,42 @@ clean.dependsOn('cleanProtobuf', 'cleanRust')
 test.dependsOn('buildRust')
 testFfi.dependsOn('buildRust')
 
+tasks.register('copyNativeLib', Copy) {
+    from "${projectDir}/../target/release"
+    include "*.dylib", "*.so"
+    into sourceSets.main.output.resourcesDir
+}
+
+jar.dependsOn('copyNativeLib')
+copyNativeLib.dependsOn('buildRustRelease')
+
 test {
     exclude "glide/ffi/FfiTest.class"
+}
+
+sourceSets {
+    main {
+        java {
+            srcDir 'src/main/java'
+        }
+        resources {
+            srcDir 'src/main/resources'
+        }
+    }
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            groupId = 'com.babushka'
+            artifactId = 'glide'
+            version = "0.0.1"
+            from components.java
+        }
+    }
+    repositories {
+        mavenLocal()
+    }
 }
 
 tasks.withType(Test) {

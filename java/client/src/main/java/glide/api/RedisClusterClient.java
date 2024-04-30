@@ -1,9 +1,11 @@
 /** Copyright GLIDE-for-Redis Project Contributors - SPDX Identifier: Apache-2.0 */
 package glide.api;
 
+import static glide.api.commands.ServerManagementCommands.SCHEDULE_REDIS_API;
 import static glide.utils.ArrayTransformUtils.castArray;
 import static glide.utils.ArrayTransformUtils.castMapOfArrays;
 import static glide.utils.ArrayTransformUtils.convertMapToKeyValueStringArray;
+import static redis_request.RedisRequestOuterClass.RequestType.BgSave;
 import static redis_request.RedisRequestOuterClass.RequestType.ClientGetName;
 import static redis_request.RedisRequestOuterClass.RequestType.ClientId;
 import static redis_request.RedisRequestOuterClass.RequestType.ConfigGet;
@@ -278,5 +280,38 @@ public class RedisClusterClient extends BaseClient
                                 ? ClusterValue.ofSingleValue(castArray(handleArrayResponse(response), String.class))
                                 : ClusterValue.ofMultiValue(
                                         castMapOfArrays(handleMapResponse(response), String.class)));
+    }
+
+    @Override
+    public CompletableFuture<String> bgsave() {
+        return commandManager.submitNewCommand(BgSave, new String[0], this::handleStringResponse);
+    }
+
+    @Override
+    public CompletableFuture<String> bgsaveSchedule() {
+        return commandManager.submitNewCommand(
+                BgSave, new String[] {SCHEDULE_REDIS_API}, this::handleStringResponse);
+    }
+
+    @Override
+    public CompletableFuture<ClusterValue<String>> bgsave(@NonNull Route route) {
+        return bgsave(false, route);
+    }
+
+    @Override
+    public CompletableFuture<ClusterValue<String>> bgsaveSchedule(@NonNull Route route) {
+        return bgsave(true, route);
+    }
+
+    protected CompletableFuture<ClusterValue<String>> bgsave(boolean schedule, @NonNull Route route) {
+        String[] arguments = schedule ? new String[] {SCHEDULE_REDIS_API} : new String[0];
+        return commandManager.submitNewCommand(
+                BgSave,
+                arguments,
+                route,
+                response ->
+                        route instanceof SingleNodeRoute
+                                ? ClusterValue.ofSingleValue(handleStringResponse(response))
+                                : ClusterValue.ofMultiValue(handleMapResponse(response)));
     }
 }

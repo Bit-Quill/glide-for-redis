@@ -1,12 +1,14 @@
 /** Copyright GLIDE-for-Redis Project Contributors - SPDX Identifier: Apache-2.0 */
 package glide.api.models;
 
+import static glide.api.commands.ServerManagementCommands.SCHEDULE_REDIS_API;
 import static glide.api.commands.SortedSetBaseCommands.WITH_SCORES_REDIS_API;
 import static glide.api.commands.SortedSetBaseCommands.WITH_SCORE_REDIS_API;
 import static glide.api.models.commands.RangeOptions.createZrangeArgs;
 import static glide.utils.ArrayTransformUtils.concatenateArrays;
 import static glide.utils.ArrayTransformUtils.convertMapToKeyValueStringArray;
 import static glide.utils.ArrayTransformUtils.convertMapToValueKeyStringArray;
+import static redis_request.RedisRequestOuterClass.RequestType.BgSave;
 import static redis_request.RedisRequestOuterClass.RequestType.Blpop;
 import static redis_request.RedisRequestOuterClass.RequestType.Brpop;
 import static redis_request.RedisRequestOuterClass.RequestType.ClientGetName;
@@ -1723,6 +1725,29 @@ public abstract class BaseTransaction<T extends BaseTransaction<T>> {
      */
     public T time() {
         protobufTransaction.addCommands(buildCommand(Time));
+        return getThis();
+    }
+
+    /**
+     * Saves the DataBase in the background.
+     *
+     * @see <a href="https://redis.io/commands/bgsave/">redis.io</a> for details.
+     * @return Command Response - A server confirmation whether background save started.
+     */
+    public T bgsave() {
+        protobufTransaction.addCommands(buildCommand(BgSave));
+        return getThis();
+    }
+
+    /**
+     * Schedules the background save of the DataBase on the next opportunity.
+     *
+     * @see <a href="https://redis.io/commands/bgsave/">redis.io</a> for details.
+     * @return Command Response - A server confirmation whether background save started or scheduled.
+     */
+    public T bgsaveSchedule() {
+        ArgsArray commandArgs = buildArgs(SCHEDULE_REDIS_API);
+        protobufTransaction.addCommands(buildCommand(BgSave, commandArgs));
         return getThis();
     }
 

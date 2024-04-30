@@ -3,6 +3,7 @@ package glide.api;
 
 import static glide.utils.ArrayTransformUtils.castArray;
 import static glide.utils.ArrayTransformUtils.convertMapToKeyValueStringArray;
+import static redis_request.RedisRequestOuterClass.RequestType.BgSave;
 import static redis_request.RedisRequestOuterClass.RequestType.ClientGetName;
 import static redis_request.RedisRequestOuterClass.RequestType.ClientId;
 import static redis_request.RedisRequestOuterClass.RequestType.ConfigGet;
@@ -131,5 +132,16 @@ public class RedisClient extends BaseClient
     public CompletableFuture<String[]> time() {
         return commandManager.submitNewCommand(
                 Time, new String[0], response -> castArray(handleArrayResponse(response), String.class));
+    }
+
+    @Override
+    public CompletableFuture<String> bgsave() {
+        return commandManager.submitNewCommand(BgSave, new String[0], this::handleStringResponse);
+    }
+
+    @Override
+    public CompletableFuture<String> bgsaveSchedule() {
+        return commandManager.submitNewCommand(
+                BgSave, new String[] {SCHEDULE_REDIS_API}, this::handleStringResponse);
     }
 }

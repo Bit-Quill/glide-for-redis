@@ -1,6 +1,7 @@
 /** Copyright GLIDE-for-Redis Project Contributors - SPDX Identifier: Apache-2.0 */
 package glide.api.models;
 
+import static glide.api.commands.ServerManagementCommands.SCHEDULE_REDIS_API;
 import static glide.api.commands.SortedSetBaseCommands.WITH_SCORES_REDIS_API;
 import static glide.api.commands.SortedSetBaseCommands.WITH_SCORE_REDIS_API;
 import static glide.api.models.commands.ExpireOptions.HAS_EXISTING_EXPIRY;
@@ -13,6 +14,7 @@ import static glide.api.models.commands.RangeOptions.InfScoreBound.POSITIVE_INFI
 import static glide.api.models.commands.SetOptions.RETURN_OLD_VALUE;
 import static glide.api.models.commands.ZaddOptions.UpdateOptions.SCORE_LESS_THAN_CURRENT;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static redis_request.RedisRequestOuterClass.RequestType.BgSave;
 import static redis_request.RedisRequestOuterClass.RequestType.Blpop;
 import static redis_request.RedisRequestOuterClass.RequestType.Brpop;
 import static redis_request.RedisRequestOuterClass.RequestType.ClientGetName;
@@ -395,6 +397,10 @@ public class TransactionTests {
 
         transaction.time();
         results.add(Pair.of(Time, buildArgs()));
+
+        transaction.bgsave().bgsaveSchedule();
+        results.add(Pair.of(BgSave, buildArgs()));
+        results.add(Pair.of(BgSave, buildArgs(SCHEDULE_REDIS_API)));
 
         transaction.persist("key");
         results.add(Pair.of(Persist, buildArgs("key")));

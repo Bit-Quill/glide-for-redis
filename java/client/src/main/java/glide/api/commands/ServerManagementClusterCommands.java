@@ -494,4 +494,18 @@ public interface ServerManagementClusterCommands {
      * }</pre>
      */
     CompletableFuture<ClusterValue<String>> lolwut(int version, int[] parameters, Route route);
+
+    /**
+     * Returns the aggregated number of keys across the different nodes.<br>.
+     *
+     * @see <a href="https://redis.io/commands/dbsize/">redis.io</a> for more details.
+     * @param route Specifies the routing configuration for the command. The client will route the
+     *     command to the nodes defined by <code>route</code>.
+     * @return Returns the aggregated number of keys across the different nodes.
+     * @example
+     *     <pre>{@code
+     * long numberOfKeys = client.dbsize(ALL_NODES).get();
+     * }</pre>
+     */
+    CompletableFuture<Long> dbsize(Route route);
 }

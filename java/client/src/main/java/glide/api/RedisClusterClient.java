@@ -13,6 +13,7 @@ import static redis_request.RedisRequestOuterClass.RequestType.ConfigResetStat;
 import static redis_request.RedisRequestOuterClass.RequestType.ConfigRewrite;
 import static redis_request.RedisRequestOuterClass.RequestType.ConfigSet;
 import static redis_request.RedisRequestOuterClass.RequestType.CustomCommand;
+import static redis_request.RedisRequestOuterClass.RequestType.DBSize;
 import static redis_request.RedisRequestOuterClass.RequestType.Echo;
 import static redis_request.RedisRequestOuterClass.RequestType.Info;
 import static redis_request.RedisRequestOuterClass.RequestType.LOLWUT;
@@ -385,5 +386,10 @@ public class RedisClusterClient extends BaseClient
                         route instanceof SingleNodeRoute
                                 ? ClusterValue.ofSingleValue(handleStringResponse(response))
                                 : ClusterValue.ofMultiValue(handleMapResponse(response)));
+    }
+
+    @Override
+    public CompletableFuture<Long> dbsize(@NonNull Route route) {
+        return commandManager.submitNewCommand(DBSize, new String[0], route, this::handleLongResponse);
     }
 }

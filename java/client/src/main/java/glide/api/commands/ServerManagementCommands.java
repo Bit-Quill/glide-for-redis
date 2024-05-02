@@ -228,4 +228,17 @@ public interface ServerManagementCommands {
      * }</pre>
      */
     CompletableFuture<String> lolwut(int version, int[] parameters);
+
+
+    /**
+     * Return the number of keys in the currently-selected database.<br>.
+     *
+     * @see <a href="https://redis.io/commands/dbsize/">redis.io</a> for more details.
+     * @return The number of keys in the currently selected database.
+     * @example
+     *     <pre>{@code
+     * long numberOfKeys = client.dbsize().get();
+     * }</pre>
+     */
+    CompletableFuture<Long> dbsize();
 }

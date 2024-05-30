@@ -5,9 +5,9 @@ use redis::{
     cluster_routing::Routable, from_owned_redis_value, Cmd, ErrorKind, RedisResult, Value,
 };
 
-#[derive(Clone, Copy)]
-pub(crate) enum ExpectedReturnType {
-    Map,
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum ExpectedReturnType<'a> {
+    Map(&'a Option<ExpectedReturnType<'a>>),
     MapOfStringToDouble,
     Double,
     Boolean,
@@ -37,10 +37,10 @@ pub(crate) fn convert_to_expected_type(
     };
 
     match expected {
-        ExpectedReturnType::Map => match value {
+        ExpectedReturnType::Map(type_of_map_values) => match value {
             Value::Nil => Ok(value),
             Value::Map(_) => Ok(value),
-            Value::Array(array) => convert_array_to_map(array, None, None),
+            Value::Array(array) => convert_array_to_map(array, None, *type_of_map_values),
             _ => Err((
                 ErrorKind::TypeError,
                 "Response couldn't be converted to map",
@@ -527,9 +527,10 @@ pub(crate) fn expected_type_for_cmd(cmd: &Cmd) -> Option<ExpectedReturnType> {
 
     // TODO use enum to avoid mistakes
     match command.as_slice() {
-        b"HGETALL" | b"XREAD" | b"CONFIG GET" | b"FT.CONFIG GET" | b"HELLO" => {
-            Some(ExpectedReturnType::Map)
+        b"HGETALL" | b"CONFIG GET" | b"FT.CONFIG GET" | b"HELLO" => {
+            Some(ExpectedReturnType::Map(&None))
         }
+        b"XREAD" => Some(ExpectedReturnType::Map(&Some(ExpectedReturnType::Map(&Some(ExpectedReturnType::ArrayOfPairs))))),
         b"INCRBYFLOAT" | b"HINCRBYFLOAT" | b"ZINCRBY" => Some(ExpectedReturnType::Double),
         b"HEXISTS" | b"HSETNX" | b"EXPIRE" | b"EXPIREAT" | b"PEXPIRE" | b"PEXPIREAT"
         | b"SISMEMBER" | b"PERSIST" | b"SMOVE" | b"RENAMENX" => Some(ExpectedReturnType::Boolean),

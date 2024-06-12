@@ -661,7 +661,9 @@ public class TransactionTestUtilities {
     private static Object[] streamCommands(BaseTransaction<?> transaction) {
         final String streamKey1 = "{streamKey}-1-" + UUID.randomUUID();
         final String groupName1 = "{groupName}-1-" + UUID.randomUUID();
-        final String groupName2 = "{groupName}-1-" + UUID.randomUUID();
+        final String groupName2 = "{groupName}-2-" + UUID.randomUUID();
+        final String consumer1 = "{consumer}-1-" + UUID.randomUUID();
+        final String consumer2 = "{consumer}-2-" + UUID.randomUUID();
 
         transaction
                 .xadd(streamKey1, Map.of("field1", "value1"), StreamAddOptions.builder().id("0-1").build())
@@ -677,6 +679,8 @@ public class TransactionTestUtilities {
                 .xgroupCreate(streamKey1, groupName1, "0-0")
                 .xgroupCreate(
                         streamKey1, groupName2, "0-0", StreamGroupOptions.builder().makeStream(true).build())
+                .xgroupCreateConsumer(streamKey1, groupName1, consumer1)
+                .xgroupDelConsumer(streamKey1, groupName1, consumer1)
                 .xgroupDestroy(streamKey1, groupName1)
                 .xgroupDestroy(streamKey1, groupName2)
                 .xdel(streamKey1, new String[] {"0-3", "0-5"});
@@ -697,6 +701,8 @@ public class TransactionTestUtilities {
             1L, // xtrim(streamKey1, new MinId(true, "0-2"))
             OK, // xgroupCreate(streamKey1, groupName1, "0-0")
             OK, // xgroupCreate(streamKey1, groupName1, "0-0", options)
+            true, // xgroupCreateConsumer(streamKey1, groupName1, consumer1)
+            0L, // xgroupDelConsumer(streamKey1, groupName1, consumer1)
             true, // xgroupDestroy(streamKey1, groupName1)
             true, // xgroupDestroy(streamKey1, groupName2)
             1L, // .xdel(streamKey1, new String[] {"0-1", "0-5"});

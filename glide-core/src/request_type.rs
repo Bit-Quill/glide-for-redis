@@ -182,6 +182,8 @@ pub enum RequestType {
     SInterCard = 175,
     XRevRange = 176,
     Copy = 178,
+    XGroupCreateConsumer = 179,
+    XGroupDelConsumer = 180,
 }
 
 fn get_two_word_command(first: &str, second: &str) -> Cmd {
@@ -367,6 +369,8 @@ impl From<::protobuf::EnumOrUnknown<ProtobufRequestType>> for RequestType {
             ProtobufRequestType::Copy => RequestType::Copy,
             ProtobufRequestType::Sort => RequestType::Sort,
             ProtobufRequestType::XRevRange => RequestType::XRevRange,
+            ProtobufRequestType::XGroupCreateConsumer => RequestType::XGroupCreateConsumer,
+            ProtobufRequestType::XGroupDelConsumer => RequestType::XGroupDelConsumer,
         }
     }
 }
@@ -548,6 +552,10 @@ impl RequestType {
             RequestType::Copy => Some(cmd("COPY")),
             RequestType::Sort => Some(cmd("SORT")),
             RequestType::XRevRange => Some(cmd("XREVRANGE")),
+            RequestType::XGroupCreateConsumer => {
+                Some(get_two_word_command("XGROUP", "CREATECONSUMER"))
+            }
+            RequestType::XGroupDelConsumer => Some(get_two_word_command("XGROUP", "DELCONSUMER")),
         }
     }
 }

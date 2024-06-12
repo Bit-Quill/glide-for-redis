@@ -212,6 +212,8 @@ enum RequestType {
     SInterCard = 175;
     XRevRange = 176;
     Copy = 178;
+    XGroupCreateConsumer = 179;
+    XGroupDelConsumer = 180;
 }
 
 message Command {

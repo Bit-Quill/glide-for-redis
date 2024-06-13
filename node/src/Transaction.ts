@@ -105,6 +105,7 @@ import {
     createZScore,
     createSUnionStore,
     createXLen,
+    createObjectRefcount,
 } from "./Commands";
 import { redis_request } from "./ProtobufMessage";
 
@@ -1474,6 +1475,20 @@ export class BaseTransaction<T extends BaseTransaction<T>> {
      */
     public object_freq(key: string): T {
         return this.addAndReturn(createObjectFreq(key));
+    }
+
+    /**
+     * Returns the reference count of the object stored at `key`.
+     *
+     * See https://valkey.io/commands/object-refcount/ for more details.
+     *
+     * @param key - The `key` of the object to get the reference count of.
+     *
+     * Command Response - If `key` exists, returns the reference count of the object stored at `key` as a `number`.
+     * Otherwise, returns `null`.
+     */
+    public objectRefcount(key: string): T {
+        return this.addAndReturn(createObjectRefcount(key));
     }
 }
 

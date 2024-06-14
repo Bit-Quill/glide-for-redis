@@ -3426,13 +3426,37 @@ public class SharedCommandTests {
         // Deletes a consumer that is not created yet returns 0
         assertEquals(0L, client.xgroupDelConsumer(key, groupName, "not_a_consumer").get());
 
-        // String streamid_1 = client.xadd(key, Map.of("field1", "value1")).get();
-        // assertNotNull(streamid_1);
-        // String streamid_2 = client.xadd(key, Map.of("field2", "value2")).get();
-        // assertNotNull(streamid_2);
+        // Add two stream entries
+        String streamid_1 = client.xadd(key, Map.of("field1", "value1")).get();
+        assertNotNull(streamid_1);
+        String streamid_2 = client.xadd(key, Map.of("field2", "value2")).get();
+        assertNotNull(streamid_2);
 
-        // TODO use XREADGROUP to mark pending messages for the consumer so that we get non-zero return
-        assertEquals(0L, client.xgroupDelConsumer(key, groupName, consumerName).get());
+        // read the entire stream for the consumer and mark messages as pending
+        var result_1 = client.xreadgroup(Map.of(key, ">"), groupName, consumerName).get();
+        assertEquals(2, result_1.get(key).size());
+
+        // delete one of the streams
+        assertEquals(1L, client.xdel(key, new String[] {streamid_1}).get());
+
+        // now xreadgroup yeilds one empty stream and one non-empty stream
+        var result_2 = client.xreadgroup(Map.of(key, "0"), groupName, consumerName).get();
+        assertEquals(2, result_2.get(key).size());
+        assertNull(result_2.get(key).get(streamid_1));
+        assertArrayEquals(new String[][] {{"field2", "value2"}}, result_2.get(key).get(streamid_2));
+
+        String streamid_3 = client.xadd(key, Map.of("field3", "value3")).get();
+        assertNotNull(streamid_3);
+
+        // Delete the consumer group and expect 2 pending messages
+        assertEquals(2L, client.xgroupDelConsumer(key, groupName, consumerName).get());
+
+        // Consume the last message with the previously deleted consumer (creates the consumer anew)
+        var result_3 = client.xreadgroup(Map.of(key, ">"), groupName, consumerName).get();
+        assertEquals(1, result_3.get(key).size());
+
+        // Delete the consumer group and expect the pending message
+        assertEquals(1L, client.xgroupDelConsumer(key, groupName, consumerName).get());
 
         // key is a string and cannot be created as a stream
         assertEquals(OK, client.set(stringKey, "not_a_stream").get());

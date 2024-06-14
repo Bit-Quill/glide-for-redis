@@ -1414,7 +1414,7 @@ public abstract class BaseClient
             @NonNull String group,
             @NonNull String consumer,
             StreamReadGroupOptions options) {
-        String[] arguments = options.toArgs(keysAndIds);
+        String[] arguments = options.toArgs(group, consumer, keysAndIds);
         return commandManager.submitNewCommand(XReadGroup, arguments, this::handleXReadResponse);
     }
 

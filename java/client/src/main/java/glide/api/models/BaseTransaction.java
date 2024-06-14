@@ -147,6 +147,7 @@ import static redis_request.RedisRequestOuterClass.RequestType.XGroupDestroy;
 import static redis_request.RedisRequestOuterClass.RequestType.XLen;
 import static redis_request.RedisRequestOuterClass.RequestType.XRange;
 import static redis_request.RedisRequestOuterClass.RequestType.XRead;
+import static redis_request.RedisRequestOuterClass.RequestType.XReadGroup;
 import static redis_request.RedisRequestOuterClass.RequestType.XRevRange;
 import static redis_request.RedisRequestOuterClass.RequestType.XTrim;
 import static redis_request.RedisRequestOuterClass.RequestType.ZAdd;
@@ -222,6 +223,7 @@ import glide.api.models.commands.stream.StreamAddOptions;
 import glide.api.models.commands.stream.StreamAddOptions.StreamAddOptionsBuilder;
 import glide.api.models.commands.stream.StreamGroupOptions;
 import glide.api.models.commands.stream.StreamRange;
+import glide.api.models.commands.stream.StreamReadGroupOptions;
 import glide.api.models.commands.stream.StreamReadOptions;
 import glide.api.models.commands.stream.StreamTrimOptions;
 import glide.api.models.configuration.ReadFrom;
@@ -2934,18 +2936,55 @@ public abstract class BaseTransaction<T extends BaseTransaction<T>> {
      * @param key The key of the stream.
      * @param group The consumer group name.
      * @param consumer The newly created consumer.
-     * @return the number of pending messages the <code>consumer</code> had before it was deleted.
-     * @example
-     *     <pre>{@code
-     * // Deletes the consumer "myconsumer" in consumer group "mygroup"
-     * Long pendingMsgCount = client.xgroupDestroy("mystream", "mygroup", "myconsumer").get();
-     * System.out.println("Consumer 'myconsumer' had " +
-     *     + pendingMsgCount + " pending messages unclaimed.");
-     * }</pre>
+     * @return Command Response - the number of pending messages the <code>consumer</code> had before
+     *     it was deleted.
      */
     public T xgroupDelConsumer(@NonNull String key, @NonNull String group, @NonNull String consumer) {
         protobufTransaction.addCommands(
                 buildCommand(XGroupDelConsumer, buildArgs(key, group, consumer)));
+        return getThis();
+    }
+
+    /**
+     * Reads entries from the given streams owned by a consumer group.
+     *
+     * @apiNote When in cluster mode, all keys in <code>keysAndIds</code> must map to the same hash
+     *     slot.
+     * @see <a href="https://valkey.io/commands/xreadgroup/">valkey.io</a> for details.
+     * @param keysAndIds A <code>Map</code> of keys and entry ids to read from. The <code>
+     *     Map</code> is composed of a stream's key and the id of the entry after which the stream
+     *     will be read. Use the special id of <code>{@literal ">"}</code> to receive only new messages.
+     * @param group The consumer group name.
+     * @param consumer The newly created consumer.
+     * @return Command Response - A <code>{@literal Map<String, Map<String[][]>>}</code> with stream
+     *      keys, to <code>Map</code> of stream-ids, to an array of pairings with format <code>[[field, entry], [field, entry], ...]<code>.
+     */
+    public T xreadgroup(Map<String, String> keysAndIds, String group, String consumer) {
+        return xreadgroup(keysAndIds, group, consumer, StreamReadGroupOptions.builder().build());
+    }
+
+    /**
+     * Reads entries from the given streams owned by a consumer group.
+     *
+     * @apiNote When in cluster mode, all keys in <code>keysAndIds</code> must map to the same hash
+     *     slot.
+     * @see <a href="https://valkey.io/commands/xreadgroup/">valkey.io</a> for details.
+     * @param keysAndIds A <code>Map</code> of keys and entry ids to read from. The <code>
+     *     Map</code> is composed of a stream's key and the id of the entry after which the stream
+     *     will be read. Use the special id of <code>{@literal ">"}</code> to receive only new messages.
+     * @param group The consumer group name.
+     * @param consumer The newly created consumer.
+     * @param options Options detailing how to read the stream {@link StreamReadGroupOptions}.
+     * @return Command Response - A <code>{@literal Map<String, Map<String[][]>>}</code> with stream
+     *      keys, to <code>Map</code> of stream-ids, to an array of pairings with format <code>[[field, entry], [field, entry], ...]<code>.
+     */
+    public T xreadgroup(
+            Map<String, String> keysAndIds,
+            String group,
+            String consumer,
+            StreamReadGroupOptions options) {
+        protobufTransaction.addCommands(
+                buildCommand(XReadGroup, buildArgs(options.toArgs(group, consumer, keysAndIds))));
         return getThis();
     }
 

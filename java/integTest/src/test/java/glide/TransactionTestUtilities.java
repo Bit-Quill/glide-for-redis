@@ -689,6 +689,8 @@ public class TransactionTestUtilities {
                 .lolwut(1)
                 .flushall()
                 .flushall(ASYNC)
+                .flushdb()
+                .flushdb(ASYNC)
                 .dbsize();
 
         return new Object[] {
@@ -698,6 +700,8 @@ public class TransactionTestUtilities {
             "Redis ver. " + REDIS_VERSION + '\n', // lolwut(1)
             OK, // flushall()
             OK, // flushall(ASYNC)
+            OK, // flushdb()
+            OK, // flushdb(ASYNC)
             0L, // dbsize()
         };
     }

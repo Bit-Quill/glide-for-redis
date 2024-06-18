@@ -192,7 +192,8 @@ pub enum RequestType {
     GeoSearch = 182,
     Watch = 183,
     UnWatch = 184,
-    GetEx = 183,
+    GeoSearchStore = 185,
+    GetEx = 186,
 }
 
 fn get_two_word_command(first: &str, second: &str) -> Cmd {
@@ -388,6 +389,7 @@ impl From<::protobuf::EnumOrUnknown<ProtobufRequestType>> for RequestType {
             ProtobufRequestType::GeoSearch => RequestType::GeoSearch,
             ProtobufRequestType::Watch => RequestType::Watch,
             ProtobufRequestType::UnWatch => RequestType::UnWatch,
+            ProtobufRequestType::GeoSearchStore => RequestType::GeoSearchStore,
             ProtobufRequestType::GetEx => RequestType::GetEx,
         }
     }
@@ -580,6 +582,7 @@ impl RequestType {
             RequestType::GeoSearch => Some(cmd("GEOSEARCH")),
             RequestType::Watch => Some(cmd("WATCH")),
             RequestType::UnWatch => Some(cmd("UNWATCH")),
+            RequestType::GeoSearchStore => Some(cmd("GEOSEARCHSTORE")),
             RequestType::GetEx => Some(cmd("GETEX")),
         }
     }

@@ -33,6 +33,7 @@ import glide.api.RedisClusterClient;
 import glide.api.models.Script;
 import glide.api.models.commands.ConditionalChange;
 import glide.api.models.commands.ExpireOptions;
+import glide.api.models.commands.GetExOptions;
 import glide.api.models.commands.LPosOptions;
 import glide.api.models.commands.ListDirection;
 import glide.api.models.commands.RangeOptions.InfLexBound;
@@ -285,6 +286,43 @@ public class SharedCommandTests {
         ExecutionException executionException =
                 assertThrows(ExecutionException.class, () -> client.getdel(key2).get());
         assertInstanceOf(RequestException.class, executionException.getCause());
+    }
+
+    @SneakyThrows
+    @ParameterizedTest(autoCloseArguments = false)
+    @MethodSource("getClients")
+    public void getex(BaseClient client) {
+        String key1 = "{key}" + UUID.randomUUID();
+        String value1 = String.valueOf(UUID.randomUUID());
+        String key2 = "{key}" + UUID.randomUUID();
+
+        client.set(key1, value1).get();
+        String data = client.getex(key1).get();
+        assertEquals(data, value1);
+
+        // non-existent key
+        data = client.getex(key2).get();
+        assertNull(data);
+
+        // key isn't a string
+        client.sadd(key2, new String[] {"a"}).get();
+        ExecutionException executionException =
+                assertThrows(ExecutionException.class, () -> client.getex(key2).get());
+        assertInstanceOf(RequestException.class, executionException.getCause());
+
+        // with option
+        data = client.getex(key1, GetExOptions.Seconds(10L)).get();
+        assertEquals(data, value1);
+
+        // invalid time measurement
+        ExecutionException invalidTimeException =
+                assertThrows(
+                        ExecutionException.class, () -> client.getex(key1, GetExOptions.Seconds(-10L)).get());
+        assertInstanceOf(RequestException.class, invalidTimeException.getCause());
+
+        // setting and clearing expiration timer
+        assertEquals(value1, client.getex(key1, GetExOptions.Seconds(10L)).get());
+        assertEquals(value1, client.getex(key1, GetExOptions.Persist()).get());
     }
 
     @SneakyThrows

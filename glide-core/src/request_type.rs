@@ -197,6 +197,8 @@ pub enum RequestType {
     SUnion = 186,
     Publish = 187,
     SPublish = 188,
+    XGroupCreateConsumer = 189,
+    XGroupDelConsumer = 190,
     RandomKey = 191,
     GetEx = 192,
 }
@@ -399,6 +401,8 @@ impl From<::protobuf::EnumOrUnknown<ProtobufRequestType>> for RequestType {
             ProtobufRequestType::GeoSearchStore => RequestType::GeoSearchStore,
             ProtobufRequestType::Publish => RequestType::Publish,
             ProtobufRequestType::SPublish => RequestType::SPublish,
+            ProtobufRequestType::XGroupCreateConsumer => RequestType::XGroupCreateConsumer,
+            ProtobufRequestType::XGroupDelConsumer => RequestType::XGroupDelConsumer,
             ProtobufRequestType::RandomKey => RequestType::RandomKey,
             ProtobufRequestType::GetEx => RequestType::GetEx,
         }
@@ -597,6 +601,10 @@ impl RequestType {
             RequestType::GeoSearchStore => Some(cmd("GEOSEARCHSTORE")),
             RequestType::Publish => Some(cmd("PUBLISH")),
             RequestType::SPublish => Some(cmd("SPUBLISH")),
+            RequestType::XGroupCreateConsumer => {
+                Some(get_two_word_command("XGROUP", "CREATECONSUMER"))
+            }
+            RequestType::XGroupDelConsumer => Some(get_two_word_command("XGROUP", "DELCONSUMER")),
             RequestType::RandomKey => Some(cmd("RANDOMKEY")),
             RequestType::GetEx => Some(cmd("GETEX")),
         }

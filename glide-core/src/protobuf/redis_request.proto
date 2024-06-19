@@ -227,7 +227,8 @@ enum RequestType {
     SUnion = 186;
     Publish = 187;
     SPublish = 188;
-    GetEx = 189;
+    RandomKey = 191;
+    GetEx = 192;
 }
 
 message Command {

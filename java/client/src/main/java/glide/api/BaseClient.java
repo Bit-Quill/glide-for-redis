@@ -478,12 +478,6 @@ public abstract class BaseClient
     }
 
     @Override
-    public CompletableFuture<String> set(@NonNull byte[] key, @NonNull byte[] value) {
-        return commandManager.submitNewCommand(
-                Set, Arrays.asList(key, value), this::handleStringResponse);
-    }
-
-    @Override
     public CompletableFuture<String> set(@NonNull String key, @NonNull String value) {
         return commandManager.submitNewCommand(
                 Set, new String[] {key, value}, this::handleStringResponse);

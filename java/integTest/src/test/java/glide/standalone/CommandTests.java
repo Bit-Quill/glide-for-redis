@@ -2,28 +2,51 @@
 package glide.standalone;
 
 import static glide.TestConfiguration.REDIS_VERSION;
-import static glide.TestConfiguration.STANDALONE_PORTS;
+import static glide.TestUtilities.checkFunctionListResponse;
+import static glide.TestUtilities.checkFunctionStatsResponse;
+import static glide.TestUtilities.commonClientConfig;
+import static glide.TestUtilities.createLuaLibWithLongRunningFunction;
+import static glide.TestUtilities.generateLuaLibCode;
+import static glide.TestUtilities.getValueFromInfo;
+import static glide.TestUtilities.parseInfoResponseToMap;
+import static glide.api.BaseClient.OK;
+import static glide.api.models.commands.FlushMode.ASYNC;
+import static glide.api.models.commands.FlushMode.SYNC;
 import static glide.api.models.commands.InfoOptions.Section.CLUSTER;
 import static glide.api.models.commands.InfoOptions.Section.CPU;
 import static glide.api.models.commands.InfoOptions.Section.EVERYTHING;
 import static glide.api.models.commands.InfoOptions.Section.MEMORY;
+import static glide.api.models.commands.InfoOptions.Section.SERVER;
+import static glide.api.models.commands.InfoOptions.Section.STATS;
 import static glide.cluster.CommandTests.DEFAULT_INFO_SECTIONS;
 import static glide.cluster.CommandTests.EVERYTHING_INFO_SECTIONS;
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import glide.api.RedisClient;
 import glide.api.models.commands.InfoOptions;
-import glide.api.models.configuration.NodeAddress;
-import glide.api.models.configuration.RedisClientConfiguration;
+import glide.api.models.exceptions.RequestException;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ExecutionException;
 import lombok.SneakyThrows;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-@Timeout(10)
+@Timeout(10) // seconds
 public class CommandTests {
 
     private static final String INITIAL_VALUE = "VALUE";
@@ -34,11 +57,7 @@ public class CommandTests {
     @SneakyThrows
     public static void init() {
         regularClient =
-                RedisClient.CreateClient(
-                                RedisClientConfiguration.builder()
-                                        .address(NodeAddress.builder().port(STANDALONE_PORTS[0]).build())
-                                        .build())
-                        .get();
+                RedisClient.CreateClient(commonClientConfig().requestTimeout(7000).build()).get();
     }
 
     @AfterAll
@@ -67,6 +86,20 @@ public class CommandTests {
 
     @Test
     @SneakyThrows
+    public void ping() {
+        String data = regularClient.ping().get();
+        assertEquals("PONG", data);
+    }
+
+    @Test
+    @SneakyThrows
+    public void ping_with_message() {
+        String data = regularClient.ping("H3LL0").get();
+        assertEquals("H3LL0", data);
+    }
+
+    @Test
+    @SneakyThrows
     public void info_without_options() {
         String data = regularClient.info().get();
         for (String section : DEFAULT_INFO_SECTIONS) {
@@ -78,7 +111,7 @@ public class CommandTests {
     @SneakyThrows
     public void info_with_multiple_options() {
         InfoOptions.InfoOptionsBuilder builder = InfoOptions.builder().section(CLUSTER);
-        if (REDIS_VERSION.feature() >= 7) {
+        if (REDIS_VERSION.isGreaterThanOrEqualTo("7.0.0")) {
             builder.section(CPU).section(MEMORY);
         }
         InfoOptions options = builder.build();
@@ -98,5 +131,610 @@ public class CommandTests {
         for (String section : EVERYTHING_INFO_SECTIONS) {
             assertTrue(data.contains("# " + section), "Section " + section + " is missing");
         }
+    }
+
+    @Test
+    @SneakyThrows
+    public void simple_select_test() {
+        assertEquals(OK, regularClient.select(0).get());
+
+        String key = UUID.randomUUID().toString();
+        String value = UUID.randomUUID().toString();
+        assertEquals(OK, regularClient.set(key, value).get());
+
+        assertEquals(OK, regularClient.select(1).get());
+        assertNull(regularClient.get(key).get());
+
+        assertEquals(OK, regularClient.select(0).get());
+        assertEquals(value, regularClient.get(key).get());
+    }
+
+    @Test
+    @SneakyThrows
+    public void select_test_gives_error() {
+        ExecutionException e =
+                assertThrows(ExecutionException.class, () -> regularClient.select(-1).get());
+        assertTrue(e.getCause() instanceof RequestException);
+    }
+
+    @Test
+    @SneakyThrows
+    public void move() {
+        String key1 = UUID.randomUUID().toString();
+        String key2 = UUID.randomUUID().toString();
+        String value1 = UUID.randomUUID().toString();
+        String value2 = UUID.randomUUID().toString();
+        String nonExistingKey = UUID.randomUUID().toString();
+        assertEquals(OK, regularClient.select(0).get());
+
+        assertEquals(false, regularClient.move(nonExistingKey, 1L).get());
+        assertEquals(OK, regularClient.set(key1, value1).get());
+        assertEquals(OK, regularClient.set(key2, value2).get());
+        assertEquals(true, regularClient.move(key1, 1L).get());
+        assertNull(regularClient.get(key1).get());
+
+        assertEquals(OK, regularClient.select(1).get());
+        assertEquals(value1, regularClient.get(key1).get());
+
+        assertEquals(OK, regularClient.set(key2, value2).get());
+        // Move does not occur because key2 already exists in DB 0
+        assertEquals(false, regularClient.move(key2, 0).get());
+        assertEquals(value2, regularClient.get(key2).get());
+
+        // Incorrect argument - DB index must be non-negative
+        ExecutionException e =
+                assertThrows(ExecutionException.class, () -> regularClient.move(key1, -1L).get());
+        assertTrue(e.getCause() instanceof RequestException);
+    }
+
+    @Test
+    @SneakyThrows
+    public void clientId() {
+        var id = regularClient.clientId().get();
+        assertTrue(id > 0);
+    }
+
+    @Test
+    @SneakyThrows
+    public void clientGetName() {
+        // TODO replace with the corresponding command once implemented
+        regularClient.customCommand(new String[] {"client", "setname", "clientGetName"}).get();
+
+        var name = regularClient.clientGetName().get();
+
+        assertEquals("clientGetName", name);
+    }
+
+    @Test
+    @SneakyThrows
+    public void config_reset_stat() {
+        String data = regularClient.info(InfoOptions.builder().section(STATS).build()).get();
+        int value_before = getValueFromInfo(data, "total_net_input_bytes");
+
+        var result = regularClient.configResetStat().get();
+        assertEquals(OK, result);
+
+        data = regularClient.info(InfoOptions.builder().section(STATS).build()).get();
+        int value_after = getValueFromInfo(data, "total_net_input_bytes");
+        assertTrue(value_after < value_before);
+    }
+
+    @Test
+    @SneakyThrows
+    public void config_rewrite_non_existent_config_file() {
+        var info = regularClient.info(InfoOptions.builder().section(SERVER).build()).get();
+        var configFile = parseInfoResponseToMap(info).get("config_file");
+
+        if (configFile.isEmpty()) {
+            ExecutionException executionException =
+                    assertThrows(ExecutionException.class, () -> regularClient.configRewrite().get());
+            assertTrue(executionException.getCause() instanceof RequestException);
+        } else {
+            assertEquals(OK, regularClient.configRewrite().get());
+        }
+    }
+
+    @Test
+    @SneakyThrows
+    public void configGet_with_no_args_returns_error() {
+        var exception =
+                assertThrows(
+                        ExecutionException.class, () -> regularClient.configGet(new String[] {}).get());
+        assertTrue(exception.getCause() instanceof RequestException);
+        assertTrue(exception.getCause().getMessage().contains("wrong number of arguments"));
+    }
+
+    @Test
+    @SneakyThrows
+    public void configGet_with_wildcard() {
+        var data = regularClient.configGet(new String[] {"*file"}).get();
+        assertTrue(data.size() > 5);
+        assertTrue(data.containsKey("pidfile"));
+        assertTrue(data.containsKey("logfile"));
+    }
+
+    @Test
+    @SneakyThrows
+    public void configGet_with_multiple_params() {
+        assumeTrue(REDIS_VERSION.isGreaterThanOrEqualTo("7.0.0"), "This feature added in redis 7");
+        var data = regularClient.configGet(new String[] {"pidfile", "logfile"}).get();
+        assertAll(
+                () -> assertEquals(2, data.size()),
+                () -> assertTrue(data.containsKey("pidfile")),
+                () -> assertTrue(data.containsKey("logfile")));
+    }
+
+    @Test
+    @SneakyThrows
+    public void configSet_with_unknown_parameter_returns_error() {
+        var exception =
+                assertThrows(
+                        ExecutionException.class,
+                        () -> regularClient.configSet(Map.of("Unknown Option", "Unknown Value")).get());
+        assertTrue(exception.getCause() instanceof RequestException);
+    }
+
+    @Test
+    @SneakyThrows
+    public void configSet_a_parameter() {
+        var oldValue = regularClient.configGet(new String[] {"maxclients"}).get().get("maxclients");
+
+        var response = regularClient.configSet(Map.of("maxclients", "42")).get();
+        assertEquals(OK, response);
+        var newValue = regularClient.configGet(new String[] {"maxclients"}).get();
+        assertEquals("42", newValue.get("maxclients"));
+
+        response = regularClient.configSet(Map.of("maxclients", oldValue)).get();
+        assertEquals(OK, response);
+    }
+
+    @SneakyThrows
+    @Test
+    public void echo() {
+        String message = "GLIDE";
+        String response = regularClient.echo(message).get();
+        assertEquals(message, response);
+    }
+
+    @Test
+    @SneakyThrows
+    public void time() {
+        // Take the time now, convert to 10 digits and subtract 1 second
+        long now = Instant.now().getEpochSecond() - 1L;
+        String[] result = regularClient.time().get();
+
+        assertEquals(2, result.length);
+
+        assertTrue(
+                Long.parseLong(result[0]) > now,
+                "Time() result (" + result[0] + ") should be greater than now (" + now + ")");
+        assertTrue(Long.parseLong(result[1]) < 1000000);
+    }
+
+    @Test
+    @SneakyThrows
+    public void lastsave() {
+        long result = regularClient.lastsave().get();
+        var yesterday = Instant.now().minus(1, ChronoUnit.DAYS);
+        assertTrue(Instant.ofEpochSecond(result).isAfter(yesterday));
+    }
+
+    @Test
+    @SneakyThrows
+    public void lolwut_lolwut() {
+        var response = regularClient.lolwut().get();
+        System.out.printf("%nLOLWUT standalone client standard response%n%s%n", response);
+        assertTrue(response.contains("Redis ver. " + REDIS_VERSION));
+
+        response = regularClient.lolwut(new int[] {30, 4, 4}).get();
+        System.out.printf(
+                "%nLOLWUT standalone client standard response with params 30 4 4%n%s%n", response);
+        assertTrue(response.contains("Redis ver. " + REDIS_VERSION));
+
+        response = regularClient.lolwut(5).get();
+        System.out.printf("%nLOLWUT standalone client ver 5 response%n%s%n", response);
+        assertTrue(response.contains("Redis ver. " + REDIS_VERSION));
+
+        response = regularClient.lolwut(6, new int[] {50, 20}).get();
+        System.out.printf(
+                "%nLOLWUT standalone client ver 6 response with params 50 20%n%s%n", response);
+        assertTrue(response.contains("Redis ver. " + REDIS_VERSION));
+    }
+
+    @Test
+    @SneakyThrows
+    public void dbsize_and_flushdb() {
+        assertEquals(OK, regularClient.flushall().get());
+        assertEquals(OK, regularClient.select(0).get());
+
+        // fill DB and check size
+        int numKeys = 10;
+        for (int i = 0; i < numKeys; i++) {
+            assertEquals(OK, regularClient.set(UUID.randomUUID().toString(), "foo").get());
+        }
+        assertEquals(10L, regularClient.dbsize().get());
+
+        // check another empty DB
+        assertEquals(OK, regularClient.select(1).get());
+        assertEquals(0L, regularClient.dbsize().get());
+
+        // check non-empty
+        assertEquals(OK, regularClient.set(UUID.randomUUID().toString(), "foo").get());
+        assertEquals(1L, regularClient.dbsize().get());
+
+        // flush and check again
+        if (REDIS_VERSION.isGreaterThanOrEqualTo("6.2.0")) {
+            assertEquals(OK, regularClient.flushdb(SYNC).get());
+        } else {
+            var executionException =
+                    assertThrows(ExecutionException.class, () -> regularClient.flushdb(SYNC).get());
+            assertInstanceOf(RequestException.class, executionException.getCause());
+            assertEquals(OK, regularClient.flushdb(ASYNC).get());
+        }
+        assertEquals(0L, regularClient.dbsize().get());
+
+        // switch to DB 0 and flush and check
+        assertEquals(OK, regularClient.select(0).get());
+        assertEquals(10L, regularClient.dbsize().get());
+        assertEquals(OK, regularClient.flushdb().get());
+        assertEquals(0L, regularClient.dbsize().get());
+    }
+
+    @Test
+    @SneakyThrows
+    public void objectFreq() {
+        String key = UUID.randomUUID().toString();
+        String maxmemoryPolicy = "maxmemory-policy";
+        String oldPolicy =
+                regularClient.configGet(new String[] {maxmemoryPolicy}).get().get(maxmemoryPolicy);
+        try {
+            assertEquals(OK, regularClient.configSet(Map.of(maxmemoryPolicy, "allkeys-lfu")).get());
+            assertEquals(OK, regularClient.set(key, "").get());
+            assertTrue(regularClient.objectFreq(key).get() >= 0L);
+        } finally {
+            regularClient.configSet(Map.of(maxmemoryPolicy, oldPolicy)).get();
+        }
+    }
+
+    @Test
+    @SneakyThrows
+    public void flushall() {
+        if (REDIS_VERSION.isGreaterThanOrEqualTo("6.2.0")) {
+            assertEquals(OK, regularClient.flushall(SYNC).get());
+        } else {
+            var executionException =
+                    assertThrows(ExecutionException.class, () -> regularClient.flushall(SYNC).get());
+            assertInstanceOf(RequestException.class, executionException.getCause());
+            assertEquals(OK, regularClient.flushall(ASYNC).get());
+        }
+
+        // TODO replace with KEYS command when implemented
+        Object[] keysAfter = (Object[]) regularClient.customCommand(new String[] {"keys", "*"}).get();
+        assertEquals(0, keysAfter.length);
+
+        assertEquals(OK, regularClient.flushall().get());
+        assertEquals(OK, regularClient.flushall(ASYNC).get());
+    }
+
+    @SneakyThrows
+    @Test
+    public void function_commands() {
+        assumeTrue(REDIS_VERSION.isGreaterThanOrEqualTo("7.0.0"), "This feature added in redis 7");
+
+        assertEquals(OK, regularClient.functionFlush(SYNC).get());
+
+        String libName = "mylib1c";
+        String funcName = "myfunc1c";
+        // function $funcName returns first argument
+        String code = generateLuaLibCode(libName, Map.of(funcName, "return args[1]"), true);
+        assertEquals(libName, regularClient.functionLoad(code, false).get());
+
+        var functionResult =
+                regularClient.fcall(funcName, new String[0], new String[] {"one", "two"}).get();
+        assertEquals("one", functionResult);
+        functionResult =
+                regularClient.fcallReadOnly(funcName, new String[0], new String[] {"one", "two"}).get();
+        assertEquals("one", functionResult);
+
+        var flist = regularClient.functionList(false).get();
+        var expectedDescription =
+                new HashMap<String, String>() {
+                    {
+                        put(funcName, null);
+                    }
+                };
+        var expectedFlags =
+                new HashMap<String, Set<String>>() {
+                    {
+                        put(funcName, Set.of("no-writes"));
+                    }
+                };
+        checkFunctionListResponse(flist, libName, expectedDescription, expectedFlags, Optional.empty());
+
+        flist = regularClient.functionList(true).get();
+        checkFunctionListResponse(
+                flist, libName, expectedDescription, expectedFlags, Optional.of(code));
+
+        // re-load library without overwriting
+        var executionException =
+                assertThrows(ExecutionException.class, () -> regularClient.functionLoad(code, false).get());
+        assertInstanceOf(RequestException.class, executionException.getCause());
+        assertTrue(
+                executionException.getMessage().contains("Library '" + libName + "' already exists"));
+
+        // re-load library with overwriting
+        assertEquals(libName, regularClient.functionLoad(code, true).get());
+        String newFuncName = "myfunc2c";
+        // function $funcName returns first argument
+        // function $newFuncName returns argument array len
+        String newCode =
+                generateLuaLibCode(
+                        libName, Map.of(funcName, "return args[1]", newFuncName, "return #args"), true);
+        assertEquals(libName, regularClient.functionLoad(newCode, true).get());
+
+        // load new lib and delete it - first lib remains loaded
+        String anotherLib = generateLuaLibCode("anotherLib", Map.of("anotherFunc", ""), false);
+        assertEquals("anotherLib", regularClient.functionLoad(anotherLib, true).get());
+        assertEquals(OK, regularClient.functionDelete("anotherLib").get());
+
+        // delete missing lib returns a error
+        executionException =
+                assertThrows(
+                        ExecutionException.class, () -> regularClient.functionDelete("anotherLib").get());
+        assertInstanceOf(RequestException.class, executionException.getCause());
+        assertTrue(executionException.getMessage().contains("Library not found"));
+
+        flist = regularClient.functionList(libName, false).get();
+        expectedDescription.put(newFuncName, null);
+        expectedFlags.put(newFuncName, Set.of("no-writes"));
+        checkFunctionListResponse(flist, libName, expectedDescription, expectedFlags, Optional.empty());
+
+        flist = regularClient.functionList(libName, true).get();
+        checkFunctionListResponse(
+                flist, libName, expectedDescription, expectedFlags, Optional.of(newCode));
+
+        functionResult =
+                regularClient.fcall(newFuncName, new String[0], new String[] {"one", "two"}).get();
+        assertEquals(2L, functionResult);
+        functionResult =
+                regularClient.fcallReadOnly(newFuncName, new String[0], new String[] {"one", "two"}).get();
+        assertEquals(2L, functionResult);
+
+        assertEquals(OK, regularClient.functionFlush(ASYNC).get());
+    }
+
+    @Test
+    @SneakyThrows
+    public void copy() {
+        assumeTrue(REDIS_VERSION.isGreaterThanOrEqualTo("6.2.0"), "This feature added in redis 6.2.0");
+        // setup
+        String source = "{key}-1" + UUID.randomUUID();
+        String destination = "{key}-2" + UUID.randomUUID();
+        long index1 = 1;
+        long index2 = 2;
+
+        try {
+            // neither key exists, returns false
+            assertFalse(regularClient.copy(source, destination, index1, false).get());
+
+            // source exists, destination does not
+            regularClient.set(source, "one").get();
+            assertTrue(regularClient.copy(source, destination, index1, false).get());
+            regularClient.select(1).get();
+            assertEquals("one", regularClient.get(destination).get());
+
+            // new value for source key
+            regularClient.select(0).get();
+            regularClient.set(source, "two").get();
+
+            // no REPLACE, copying to existing key on DB 0&1, non-existing key on DB 2
+            assertFalse(regularClient.copy(source, destination, index1, false).get());
+            assertTrue(regularClient.copy(source, destination, index2, false).get());
+
+            // new value only gets copied to DB 2
+            regularClient.select(1).get();
+            assertEquals("one", regularClient.get(destination).get());
+            regularClient.select(2).get();
+            assertEquals("two", regularClient.get(destination).get());
+
+            // both exists, with REPLACE, when value isn't the same, source always get copied to
+            // destination
+            regularClient.select(0).get();
+            assertTrue(regularClient.copy(source, destination, index1, true).get());
+            regularClient.select(1).get();
+            assertEquals("two", regularClient.get(destination).get());
+        }
+
+        // switching back to db 0
+        finally {
+            regularClient.select(0).get();
+        }
+    }
+
+    @Test
+    @SneakyThrows
+    public void functionStats_and_functionKill() {
+        assumeTrue(REDIS_VERSION.isGreaterThanOrEqualTo("7.0.0"), "This feature added in redis 7");
+
+        String libName = "functionStats_and_functionKill";
+        String funcName = "deadlock";
+        String code = createLuaLibWithLongRunningFunction(libName, funcName, 15, true);
+        String error = "";
+
+        assertEquals(OK, regularClient.functionFlush(SYNC).get());
+
+        try {
+            // nothing to kill
+            var exception =
+                    assertThrows(ExecutionException.class, () -> regularClient.functionKill().get());
+            assertInstanceOf(RequestException.class, exception.getCause());
+            assertTrue(exception.getMessage().toLowerCase().contains("notbusy"));
+
+            // load the lib
+            assertEquals(libName, regularClient.functionLoad(code, true).get());
+
+            try (var testClient =
+                    RedisClient.CreateClient(commonClientConfig().requestTimeout(7000).build()).get()) {
+                // call the function without await
+                var promise = testClient.fcall(funcName);
+
+                int timeout = 5200; // ms
+                while (timeout > 0) {
+                    var stats = regularClient.functionStats().get();
+                    if (stats.get("running_script") != null) {
+                        checkFunctionStatsResponse(stats, new String[] {"FCALL", funcName, "0"}, 1, 1);
+                        break;
+                    }
+                    Thread.sleep(100);
+                    timeout -= 100;
+                }
+                if (timeout == 0) {
+                    error += "Can't find a running function.";
+                }
+
+                // redis kills a function with 5 sec delay
+                assertEquals(OK, regularClient.functionKill().get());
+
+                exception =
+                        assertThrows(ExecutionException.class, () -> regularClient.functionKill().get());
+                assertInstanceOf(RequestException.class, exception.getCause());
+                assertTrue(exception.getMessage().toLowerCase().contains("notbusy"));
+
+                exception = assertThrows(ExecutionException.class, promise::get);
+                assertInstanceOf(RequestException.class, exception.getCause());
+                assertTrue(exception.getMessage().contains("Script killed by user"));
+            }
+        } finally {
+            // If function wasn't killed, and it didn't time out - it blocks the server and cause rest
+            // test to fail.
+            try {
+                regularClient.functionKill().get();
+                // should throw `notbusy` error, because the function should be killed before
+                error += "Function should be killed before.";
+            } catch (Exception ignored) {
+            }
+        }
+
+        assertEquals(OK, regularClient.functionDelete(libName).get());
+
+        assertTrue(error.isEmpty(), "Something went wrong during the test");
+    }
+
+    @Test
+    @SneakyThrows
+    public void functionStats_and_functionKill_write_function() {
+        assumeTrue(REDIS_VERSION.isGreaterThanOrEqualTo("7.0.0"), "This feature added in redis 7");
+
+        String libName = "functionStats_and_functionKill_write_function";
+        String funcName = "deadlock_write_function";
+        String key = libName;
+        String code = createLuaLibWithLongRunningFunction(libName, funcName, 6, false);
+        String error = "";
+
+        assertEquals(OK, regularClient.functionFlush(SYNC).get());
+
+        try {
+            // nothing to kill
+            var exception =
+                    assertThrows(ExecutionException.class, () -> regularClient.functionKill().get());
+            assertInstanceOf(RequestException.class, exception.getCause());
+            assertTrue(exception.getMessage().toLowerCase().contains("notbusy"));
+
+            // load the lib
+            assertEquals(libName, regularClient.functionLoad(code, true).get());
+
+            try (var testClient =
+                    RedisClient.CreateClient(commonClientConfig().requestTimeout(7000).build()).get()) {
+                // call the function without await
+                var promise = testClient.fcall(funcName, new String[] {key}, new String[0]);
+
+                int timeout = 5200; // ms
+                while (timeout > 0) {
+                    var stats = regularClient.functionStats().get();
+                    if (stats.get("running_script") != null) {
+                        checkFunctionStatsResponse(stats, new String[] {"FCALL", funcName, "1", key}, 1, 1);
+                        break;
+                    }
+                    Thread.sleep(100);
+                    timeout -= 100;
+                }
+                if (timeout == 0) {
+                    error += "Can't find a running function.";
+                }
+
+                // can't kill a write function
+                exception =
+                        assertThrows(ExecutionException.class, () -> regularClient.functionKill().get());
+                assertInstanceOf(RequestException.class, exception.getCause());
+                assertTrue(exception.getMessage().toLowerCase().contains("unkillable"));
+
+                assertEquals("Timed out 6 sec", promise.get());
+
+                exception =
+                        assertThrows(ExecutionException.class, () -> regularClient.functionKill().get());
+                assertInstanceOf(RequestException.class, exception.getCause());
+                assertTrue(exception.getMessage().toLowerCase().contains("notbusy"));
+            }
+        } finally {
+            // If function wasn't killed, and it didn't time out - it blocks the server and cause rest
+            // test to fail.
+            try {
+                regularClient.functionKill().get();
+                // should throw `notbusy` error, because the function should be killed before
+                error += "Function should finish prior to the test end.";
+            } catch (Exception ignored) {
+            }
+        }
+
+        assertTrue(error.isEmpty(), "Something went wrong during the test");
+    }
+
+    @Test
+    @SneakyThrows
+    public void functionStats() {
+        assumeTrue(REDIS_VERSION.isGreaterThanOrEqualTo("7.0.0"), "This feature added in redis 7");
+
+        String libName = "functionStats";
+        String funcName = libName;
+        assertEquals(OK, regularClient.functionFlush(SYNC).get());
+
+        // function $funcName returns first argument
+        String code = generateLuaLibCode(libName, Map.of(funcName, "return args[1]"), false);
+        assertEquals(libName, regularClient.functionLoad(code, true).get());
+
+        var response = regularClient.functionStats().get();
+        checkFunctionStatsResponse(response, new String[0], 1, 1);
+
+        code =
+                generateLuaLibCode(
+                        libName + "_2",
+                        Map.of(funcName + "_2", "return 'OK'", funcName + "_3", "return 42"),
+                        false);
+        assertEquals(libName + "_2", regularClient.functionLoad(code, true).get());
+
+        response = regularClient.functionStats().get();
+        checkFunctionStatsResponse(response, new String[0], 2, 3);
+
+        assertEquals(OK, regularClient.functionFlush(SYNC).get());
+
+        response = regularClient.functionStats().get();
+        checkFunctionStatsResponse(response, new String[0], 0, 0);
+    }
+
+    @SneakyThrows
+    @Test
+    public void randomkey() {
+        String key1 = "{key}" + UUID.randomUUID();
+        String key2 = "{key}" + UUID.randomUUID();
+
+        assertEquals(OK, regularClient.set(key1, "a").get());
+        assertEquals(OK, regularClient.set(key2, "b").get());
+
+        String randomKey = regularClient.randomKey().get();
+        assertEquals(1L, regularClient.exists(new String[] {randomKey}).get());
+
+        // no keys in database
+        assertEquals(OK, regularClient.flushall().get());
+        assertNull(regularClient.randomKey().get());
     }
 }

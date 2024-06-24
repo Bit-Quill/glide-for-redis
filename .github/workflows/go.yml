@@ -1,39 +1,51 @@
 name: Go CI
 
 on:
-    workflow_dispatch:
     push:
         branches: [ "main" ]
         paths:
-            - glide-core/**
+            - glide-core/src/**
             - submodules/**
             - go/**
             - .github/workflows/go.yml
     pull_request:
         paths:
-            - glide-core/**
+            - glide-core/src/**
             - submodules/**
             - go/**
             - .github/workflows/go.yml
 
+concurrency:
+    group: go-${{ github.head_ref || github.ref }}
+    cancel-in-progress: true
+
+
 jobs:
     build-and-test-go-client:
-        timeout-minutes: 20
+        timeout-minutes: 35
         strategy:
             # Run all jobs
             fail-fast: false
             matrix:
                 go:
-                    - '1.18'
-                    - '1.21'
+                    - '1.18.10'
+                    - '1.22.0'
                 redis:
                     - 6.2.14
                     - 7.2.3
-                os:
-                    - ubuntu-latest
-                    - macos-latest
+                host:
+                  - {
+                    OS: ubuntu,
+                    RUNNER: ubuntu-latest,
+                    TARGET: x86_64-unknown-linux-gnu
+                  }
+                  - {
+                    OS: macos,
+                    RUNNER: macos-latest,
+                    TARGET: aarch64-apple-darwin
+                  }
 
-        runs-on: ${{ matrix.os }}
+        runs-on: ${{ matrix.host.RUNNER }}
 
         steps:
             - uses: actions/checkout@v4
@@ -49,8 +61,8 @@ jobs:
             - name: Install shared software dependencies
               uses: ./.github/workflows/install-shared-dependencies
               with:
-                  os: ${{ matrix.os }}
-                  target: ${{ matrix.os == 'ubuntu-latest' && 'x86_64-unknown-linux-gnu' || 'x86_64-apple-darwin' }}
+                  os: ${{ matrix.host.OS }}
+                  target: ${{ matrix.host.TARGET }}
                   github-token: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Install redis
@@ -60,9 +72,13 @@ jobs:
               with:
                   redis-version: ${{ matrix.redis }}
 
-            - name: Install client dependencies
+            - name: Install tools for Go ${{ matrix.go }}
               working-directory: ./go
-              run: make install-tools
+              run: make install-tools-go${{ matrix.go }}
+
+            - name: Set LD_LIBRARY_PATH
+              if: ${{ matrix.os == 'ubuntu-latest' }}
+              run: echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$GITHUB_WORKSPACE/go/target/release/deps/" >> $GITHUB_ENV
 
             - name: Build client
               working-directory: ./go
@@ -70,20 +86,11 @@ jobs:
 
             - name: Run linters
               working-directory: ./go
-              run: make lint
+              run: make lint-ci
 
-            - name: Run unit tests
+            - name: Run tests
               working-directory: ./go
-              run: make unit-test-report
-
-            - name: Upload test reports
-              if: always()
-              continue-on-error: true
-              uses: actions/upload-artifact@v4
-              with:
-                  name: test-reports-go-${{ matrix.go }}-redis-${{ matrix.redis }}-${{ matrix.os }}
-                  path: |
-                      go/reports/unit-test-report.html
+              run: make test
 
     build-amazonlinux-latest:
         if: github.repository_owner == 'aws'
@@ -93,7 +100,7 @@ jobs:
             matrix:
                 go:
                     - 1.18.10
-                    - 1.21.6
+                    - 1.22.0
         runs-on: ubuntu-latest
         container: amazonlinux:latest
         timeout-minutes: 15
@@ -135,9 +142,9 @@ jobs:
                   echo "/usr/local/go/bin" >> $GITHUB_PATH
                   echo "$HOME/go/bin" >> $GITHUB_PATH
 
-            - name: Install client dependencies
+            - name: Install tools for Go ${{ matrix.go }}
               working-directory: ./go
-              run: make install-tools
+              run: make install-tools-go${{ matrix.go }}
 
             - name: Build client
               working-directory: ./go
@@ -145,19 +152,11 @@ jobs:
 
             - name: Run linters
               working-directory: ./go
-              run: make lint
+              run: make lint-ci
 
-            - name: Run unit tests
+            - name: Run tests
               working-directory: ./go
-              run: make unit-test-report
-
-            - name: Upload test reports
-              if: always()
-              continue-on-error: true
-              uses: actions/upload-artifact@v4
-              with:
-                  name: test-reports-go-${{ matrix.go }}-amazon-linux-latest
-                  path: go/reports/unit-test-report.html
+              run: make test
 
     lint-rust:
         timeout-minutes: 15

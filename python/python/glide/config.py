@@ -1,8 +1,12 @@
 # Copyright GLIDE-for-Redis Project Contributors - SPDX Identifier: Apache-2.0
 
-from enum import Enum
-from typing import List, Optional
+from __future__ import annotations
 
+from dataclasses import dataclass
+from enum import Enum, IntEnum
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+
+from glide.async_commands.core import CoreCommands
 from glide.protobuf.connection_request_pb2 import ConnectionRequest
 from glide.protobuf.connection_request_pb2 import ProtocolVersion as SentProtocolVersion
 from glide.protobuf.connection_request_pb2 import ReadFrom as ProtobufReadFrom
@@ -92,6 +96,33 @@ class RedisCredentials:
         self.username = username
 
 
+class PeriodicChecksManualInterval:
+    def __init__(self, duration_in_sec: int) -> None:
+        """
+        Represents a manually configured interval for periodic checks.
+
+        Args:
+            duration_in_sec (int): The duration in seconds for the interval between periodic checks.
+        """
+        self.duration_in_sec = duration_in_sec
+
+
+class PeriodicChecksStatus(Enum):
+    """
+    Represents the cluster's periodic checks status.
+    To configure specific interval, see PeriodicChecksManualInterval.
+    """
+
+    ENABLED_DEFAULT_CONFIGS = 0
+    """
+    Enables the periodic checks with the default configurations.
+    """
+    DISABLED = 1
+    """
+    Disables the periodic checks.
+    """
+
+
 class BaseClientConfiguration:
     def __init__(
         self,
@@ -167,6 +198,14 @@ class BaseClientConfiguration:
 
         return request
 
+    def _is_pubsub_configured(self) -> bool:
+        return False
+
+    def _get_pubsub_callback_and_context(
+        self,
+    ) -> Tuple[Optional[Callable[[CoreCommands.PubSubMsg, Any], None]], Any]:
+        return None, None
+
 
 class RedisClientConfiguration(BaseClientConfiguration):
     """
@@ -191,10 +230,42 @@ class RedisClientConfiguration(BaseClientConfiguration):
         reconnect_strategy (Optional[BackoffStrategy]): Strategy used to determine how and when to reconnect, in case of
             connection failures.
             If not set, a default backoff strategy will be used.
-        database_id (Optional[Int]): index of the logical database to connect to.
+        database_id (Optional[int]): index of the logical database to connect to.
         client_name (Optional[str]): Client name to be used for the client. Will be used with CLIENT SETNAME command during connection establishment.
         protocol (ProtocolVersion): The version of the Redis RESP protocol to communicate with the server.
+        pubsub_subscriptions (Optional[RedisClientConfiguration.PubSubSubscriptions]): Pubsub subscriptions to be used for the client.
+                Will be applied via SUBSCRIBE/PSUBSCRIBE commands during connection establishment.
     """
+
+    class PubSubChannelModes(IntEnum):
+        """
+        Describes pubsub subsciption modes.
+        See https://valkey.io/docs/topics/pubsub/ for more details
+        """
+
+        Exact = 0
+        """ Use exact channel names """
+        Pattern = 1
+        """ Use channel name patterns """
+
+    @dataclass
+    class PubSubSubscriptions:
+        """Describes pubsub configuration for standalone mode client.
+
+        Attributes:
+            channels_and_patterns (Dict[RedisClientConfiguration.PubSubChannelModes, Set[str]]):
+                Channels and patterns by modes.
+            callback (Optional[Callable[[CoreCommands.PubSubMsg, Any], None]]):
+                Optional callback to accept the incomming messages.
+            context (Any):
+                Arbitrary context to pass to the callback.
+        """
+
+        channels_and_patterns: Dict[
+            RedisClientConfiguration.PubSubChannelModes, Set[str]
+        ]
+        callback: Optional[Callable[[CoreCommands.PubSubMsg, Any], None]]
+        context: Any
 
     def __init__(
         self,
@@ -207,6 +278,7 @@ class RedisClientConfiguration(BaseClientConfiguration):
         database_id: Optional[int] = None,
         client_name: Optional[str] = None,
         protocol: ProtocolVersion = ProtocolVersion.RESP3,
+        pubsub_subscriptions: Optional[PubSubSubscriptions] = None,
     ):
         super().__init__(
             addresses=addresses,
@@ -219,12 +291,13 @@ class RedisClientConfiguration(BaseClientConfiguration):
         )
         self.reconnect_strategy = reconnect_strategy
         self.database_id = database_id
+        self.pubsub_subscriptions = pubsub_subscriptions
 
     def _create_a_protobuf_conn_request(
         self, cluster_mode: bool = False
     ) -> ConnectionRequest:
         assert cluster_mode is False
-        request = super()._create_a_protobuf_conn_request(False)
+        request = super()._create_a_protobuf_conn_request(cluster_mode)
         if self.reconnect_strategy:
             request.connection_retry_strategy.number_of_retries = (
                 self.reconnect_strategy.num_of_retries
@@ -236,7 +309,28 @@ class RedisClientConfiguration(BaseClientConfiguration):
         if self.database_id:
             request.database_id = self.database_id
 
+        if self.pubsub_subscriptions:
+            for (
+                channel_type,
+                channels_patterns,
+            ) in self.pubsub_subscriptions.channels_and_patterns.items():
+                entry = request.pubsub_subscriptions.channels_or_patterns_by_type[
+                    int(channel_type)
+                ]
+                for channel_pattern in channels_patterns:
+                    entry.channels_or_patterns.append(str.encode(channel_pattern))
+
         return request
+
+    def _is_pubsub_configured(self) -> bool:
+        return self.pubsub_subscriptions is not None
+
+    def _get_pubsub_callback_and_context(
+        self,
+    ) -> Tuple[Optional[Callable[[CoreCommands.PubSubMsg, Any], None]], Any]:
+        if self.pubsub_subscriptions:
+            return self.pubsub_subscriptions.callback, self.pubsub_subscriptions.context
+        return None, None
 
 
 class ClusterClientConfiguration(BaseClientConfiguration):
@@ -259,11 +353,49 @@ class ClusterClientConfiguration(BaseClientConfiguration):
             If the specified timeout is exceeded for a pending request, it will result in a timeout error. If not set, a default value will be used.
         client_name (Optional[str]): Client name to be used for the client. Will be used with CLIENT SETNAME command during connection establishment.
         protocol (ProtocolVersion): The version of the Redis RESP protocol to communicate with the server.
+        periodic_checks (Union[PeriodicChecksStatus, PeriodicChecksManualInterval]): Configure the periodic topology checks.
+            These checks evaluate changes in the cluster's topology, triggering a slot refresh when detected.
+            Periodic checks ensure a quick and efficient process by querying a limited number of nodes.
+            Defaults to PeriodicChecksStatus.ENABLED_DEFAULT_CONFIGS.
+        pubsub_subscriptions (Optional[ClusterClientConfiguration.PubSubSubscriptions]): Pubsub subscriptions to be used for the client.
+            Will be applied via SUBSCRIBE/PSUBSCRIBE/SSUBSCRIBE commands during connection establishment.
 
     Notes:
         Currently, the reconnection strategy in cluster mode is not configurable, and exponential backoff
         with fixed values is used.
     """
+
+    class PubSubChannelModes(IntEnum):
+        """
+        Describes pubsub subsciption modes.
+        See https://valkey.io/docs/topics/pubsub/ for more details
+        """
+
+        Exact = 0
+        """ Use exact channel names """
+        Pattern = 1
+        """ Use channel name patterns """
+        Sharded = 2
+        """ Use sharded pubsub """
+
+    @dataclass
+    class PubSubSubscriptions:
+        """Describes pubsub configuration for cluster mode client.
+
+        Attributes:
+            channels_and_patterns (Dict[ClusterClientConfiguration.PubSubChannelModes, Set[str]]):
+                Channels and patterns by modes.
+            callback (Optional[Callable[[CoreCommands.PubSubMsg, Any], None]]):
+                Optional callback to accept the incomming messages.
+            context (Any):
+                Arbitrary context to pass to the callback.
+        """
+
+        channels_and_patterns: Dict[
+            ClusterClientConfiguration.PubSubChannelModes, Set[str]
+        ]
+        callback: Optional[Callable[[CoreCommands.PubSubMsg, Any], None]]
+        context: Any
 
     def __init__(
         self,
@@ -274,6 +406,10 @@ class ClusterClientConfiguration(BaseClientConfiguration):
         request_timeout: Optional[int] = None,
         client_name: Optional[str] = None,
         protocol: ProtocolVersion = ProtocolVersion.RESP3,
+        periodic_checks: Union[
+            PeriodicChecksStatus, PeriodicChecksManualInterval
+        ] = PeriodicChecksStatus.ENABLED_DEFAULT_CONFIGS,
+        pubsub_subscriptions: Optional[PubSubSubscriptions] = None,
     ):
         super().__init__(
             addresses=addresses,
@@ -284,3 +420,40 @@ class ClusterClientConfiguration(BaseClientConfiguration):
             client_name=client_name,
             protocol=protocol,
         )
+        self.periodic_checks = periodic_checks
+        self.pubsub_subscriptions = pubsub_subscriptions
+
+    def _create_a_protobuf_conn_request(
+        self, cluster_mode: bool = False
+    ) -> ConnectionRequest:
+        assert cluster_mode is True
+        request = super()._create_a_protobuf_conn_request(cluster_mode)
+        if type(self.periodic_checks) is PeriodicChecksManualInterval:
+            request.periodic_checks_manual_interval.duration_in_sec = (
+                self.periodic_checks.duration_in_sec
+            )
+        elif self.periodic_checks == PeriodicChecksStatus.DISABLED:
+            request.periodic_checks_disabled.SetInParent()
+
+        if self.pubsub_subscriptions:
+            for (
+                channel_type,
+                channels_patterns,
+            ) in self.pubsub_subscriptions.channels_and_patterns.items():
+                entry = request.pubsub_subscriptions.channels_or_patterns_by_type[
+                    int(channel_type)
+                ]
+                for channel_pattern in channels_patterns:
+                    entry.channels_or_patterns.append(str.encode(channel_pattern))
+
+        return request
+
+    def _is_pubsub_configured(self) -> bool:
+        return self.pubsub_subscriptions is not None
+
+    def _get_pubsub_callback_and_context(
+        self,
+    ) -> Tuple[Optional[Callable[[CoreCommands.PubSubMsg, Any], None]], Any]:
+        if self.pubsub_subscriptions:
+            return self.pubsub_subscriptions.callback, self.pubsub_subscriptions.context
+        return None, None

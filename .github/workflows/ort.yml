@@ -32,14 +32,20 @@ jobs:
             - name: Set the release version
               shell: bash
               run: |
-                  export version=`if ${{ github.event_name == 'schedule' || github.event_name == 'pull_request' }}; then echo '255.255.255'; else echo ${{ github.event.inputs.version }}; fi`
+                  export version=`if [ "$EVENT_NAME" == 'schedule' ] || [ "$EVENT_NAME" == 'pull_request' ]; then echo '255.255.255'; else echo "$INPUT_VERSION"; fi`
                   echo "RELEASE_VERSION=${version}" >> $GITHUB_ENV
+              env:
+                EVENT_NAME: ${{ github.event_name }}
+                INPUT_VERSION: ${{ github.event.inputs.version }}
               
             - name: Set the base branch
               run: |
-                export BASE_BRANCH=`if ${{ github.event_name == 'schedule'}}; then echo 'main'; elif ${{ github.event_name == 'workflow_dispatch'}}; then echo ${{ github.event.inputs.branch }}; else echo "";fi`
+                export BASE_BRANCH=`if [ "$EVENT_NAME" == 'schedule' ]; then echo 'main'; elif [ "$EVENT_NAME" == 'workflow_dispatch' ]; then echo "$INPUT_BRANCH"; else echo ""; fi`
                 echo "Base branch is: ${BASE_BRANCH}"
                 echo "BASE_BRANCH=${BASE_BRANCH}" >> $GITHUB_ENV
+              env:
+                EVENT_NAME: ${{ github.event_name }}
+                INPUT_BRANCH: ${{ github.event.inputs.branch }}
 
             - name: Checkout
               uses: actions/checkout@v4
@@ -69,19 +75,15 @@ jobs:
               with: 
                   repository: "oss-review-toolkit/ort"
                   path: "./ort"
-                  ref: main
+                  ref: "20.1.0"
                   submodules: recursive
 
-            - name: Checkout ORT latest release tag
-              if: steps.cache-ort.outputs.cache-hit != 'true'
-              working-directory: ./ort/
-              run: |
-                # Get new tags from remote
-                git fetch --tags
-                # Get latest tag name
-                LATEST_TAG=$(git describe --tags "$(git rev-list --tags --max-count=1)")
-                # Checkout latest tag
-                git checkout $LATEST_TAG
+            # Temporary workaround until ORT releases a version newer than 22.1.0 addressing https://github.com/oss-review-toolkit/ort/issues/8571.
+            # Upon resolution, remove this section and install the updated version instead of "20.1.0".
+            - name: Install Rust toolchain
+              uses: dtolnay/rust-toolchain@1.76 
+              with:
+                targets: ${{ inputs.target }}
 
             - name: Install ORT
               if: steps.cache-ort.outputs.cache-hit != 'true'
@@ -184,16 +186,18 @@ jobs:
             - name: Create pull request
               if: ${{ env.FOUND_DIFF  == 'true' && github.event_name != 'pull_request' }}
               run: |
-                export BRANCH_NAME=`if ${{ github.event_name == 'schedule' || github.event_name == 'pull_request' }}; then echo "scheduled-ort"; else echo "ort-v${{ github.event.inputs.version }}"; fi`
+                export BRANCH_NAME=`if [ "$EVENT_NAME" == 'schedule' ] || [ "$EVENT_NAME" == 'pull_request' ]; then echo 'scheduled-ort'; else echo "ort-v$INPUT_VERSION"; fi`
                 echo "Creating pull request from branch ${BRANCH_NAME} to branch ${{ env.BASE_BRANCH }}"
                 git config --global user.email "glide-for-redis@amazon.com"
                 git config --global user.name "ort-bot"
                 git checkout -b ${BRANCH_NAME}
-
                 git add $PYTHON_ATTRIBUTIONS $NODE_ATTRIBUTIONS $RUST_ATTRIBUTIONS
                 git commit -m "Updated attribution files"
                 git push --set-upstream origin ${BRANCH_NAME} -f
                 title="Updated attribution files for ${BRANCH_NAME}"
                 gh pr create -B ${{ env.BASE_BRANCH }} -H ${BRANCH_NAME} --title "${title}" --body 'Created by Github action.\n${{ env.LICENSES_LIST }}'
               env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                EVENT_NAME: ${{ github.event_name }}
+                INPUT_VERSION: ${{ github.event.inputs.version }}
+  

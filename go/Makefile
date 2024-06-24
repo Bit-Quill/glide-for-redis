@@ -1,14 +1,34 @@
-install-tools:
-	@cat tools.go | grep _ | awk -F'"' '{print $$2}' | xargs -tI % go install %
+install-build-tools:
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.33.0
 
-build: build-glide-core build-glide-client generate-protobuf
+install-dev-tools-go1.18.10:
+	go install github.com/vakenbolt/go-test-report@v0.9.3
+	go install mvdan.cc/gofumpt@v0.4.0
+	go install github.com/segmentio/golines@v0.11.0
+	go install honnef.co/go/tools/cmd/staticcheck@v0.3.3
+	cargo install cbindgen
+
+install-dev-tools-go1.22.0:
+	go install github.com/vakenbolt/go-test-report@v0.9.3
+	go install mvdan.cc/gofumpt@v0.6.0
+	go install github.com/segmentio/golines@v0.12.2
+	go install honnef.co/go/tools/cmd/staticcheck@v0.4.6
+	cargo install cbindgen
+
+install-dev-tools: install-dev-tools-go1.22.0
+
+install-tools-go1.18.10: install-build-tools install-dev-tools-go1.18.10
+
+install-tools-go1.22.0: install-build-tools install-dev-tools-go1.22.0
+
+install-tools: install-tools-go1.22.0
+
+build: build-glide-client generate-protobuf
 	go build ./...
-
-build-glide-core:
-	cd ../glide-core; cargo build --release
 
 build-glide-client:
 	cargo build --release
+	cbindgen --config cbindgen.toml --crate glide-rs --output lib.h
 
 generate-protobuf:
 	mkdir -p protobuf
@@ -23,7 +43,20 @@ generate-protobuf:
 lint:
 	go vet ./...
 	staticcheck ./...
+	gofumpt -d .
+	golines --dry-run --shorten-comments -m 127 .
 
-unit-test-report:
+lint-ci: lint
+	if [ "$$(gofumpt -l . | wc -l)" -gt 0 ]; then exit 1; fi
+	if [ "$$(golines -l --shorten-comments -m 127 . | wc -l)" -gt 0 ]; then exit 1; fi
+
+format:
+	gofumpt -w .
+	golines -w --shorten-comments -m 127 .
+
+test:
+	go test -v -race ./...
+
+test-and-report:
 	mkdir -p reports
-	go test -race ./... -json | go-test-report -o reports/unit-test-report.html
+	go test -v -race ./... -json | go-test-report -o reports/test-report.html

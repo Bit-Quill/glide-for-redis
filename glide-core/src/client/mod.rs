@@ -1,31 +1,33 @@
 /**
  * Copyright GLIDE-for-Redis Project Contributors - SPDX Identifier: Apache-2.0
  */
-use crate::connection_request::{
-    ConnectionRequest, NodeAddress, ProtocolVersion, ReadFrom, TlsMode,
-};
+mod types;
+
 use crate::scripts_container::get_script;
 use futures::FutureExt;
 use logger_core::log_info;
 use redis::aio::ConnectionLike;
 use redis::cluster_async::ClusterConnection;
-use redis::cluster_routing::{RoutingInfo, SingleNodeRoutingInfo};
-use redis::RedisResult;
-use redis::{Cmd, ErrorKind, Value};
+use redis::cluster_routing::{Routable, RoutingInfo, SingleNodeRoutingInfo};
+use redis::{Cmd, ErrorKind, PushInfo, Value};
+use redis::{RedisError, RedisResult};
 pub use standalone_client::StandaloneClient;
 use std::io;
 use std::ops::Deref;
 use std::time::Duration;
+pub use types::*;
 
-use self::value_conversion::{convert_to_expected_type, expected_type_for_cmd};
+use self::value_conversion::{convert_to_expected_type, expected_type_for_cmd, get_value_type};
 mod reconnecting_connection;
 mod standalone_client;
 mod value_conversion;
+use tokio::sync::mpsc;
 
 pub const HEARTBEAT_SLEEP_DURATION: Duration = Duration::from_secs(1);
 
 pub const DEFAULT_RESPONSE_TIMEOUT: Duration = Duration::from_millis(250);
 pub const DEFAULT_CONNECTION_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(250);
+pub const DEFAULT_PERIODIC_CHECKS_INTERVAL: Duration = Duration::from_secs(60);
 pub const INTERNAL_CONNECTION_TIMEOUT: Duration = Duration::from_millis(250);
 
 pub(super) fn get_port(address: &NodeAddress) -> u16 {
@@ -33,41 +35,31 @@ pub(super) fn get_port(address: &NodeAddress) -> u16 {
     if address.port == 0 {
         DEFAULT_PORT
     } else {
-        address.port as u16
-    }
-}
-
-fn chars_to_string_option(chars: &::protobuf::Chars) -> Option<String> {
-    if chars.is_empty() {
-        None
-    } else {
-        Some(chars.to_string())
-    }
-}
-
-pub fn convert_to_redis_protocol(protocol: ProtocolVersion) -> redis::ProtocolVersion {
-    match protocol {
-        ProtocolVersion::RESP3 => redis::ProtocolVersion::RESP3,
-        ProtocolVersion::RESP2 => redis::ProtocolVersion::RESP2,
+        address.port
     }
 }
 
 pub(super) fn get_redis_connection_info(
     connection_request: &ConnectionRequest,
 ) -> redis::RedisConnectionInfo {
-    let protocol = convert_to_redis_protocol(connection_request.protocol.enum_value_or_default());
-    match connection_request.authentication_info.0.as_ref() {
+    let protocol = connection_request.protocol.unwrap_or_default();
+    let db = connection_request.database_id;
+    let client_name = connection_request.client_name.clone();
+    let pubsub_subscriptions = connection_request.pubsub_subscriptions.clone();
+    match &connection_request.authentication_info {
         Some(info) => redis::RedisConnectionInfo {
-            db: connection_request.database_id as i64,
-            username: chars_to_string_option(&info.username),
-            password: chars_to_string_option(&info.password),
+            db,
+            username: info.username.clone(),
+            password: info.password.clone(),
             protocol,
-            client_name: chars_to_string_option(&connection_request.client_name),
+            client_name,
+            pubsub_subscriptions,
         },
         None => redis::RedisConnectionInfo {
-            db: connection_request.database_id as i64,
+            db,
             protocol,
-            client_name: chars_to_string_option(&connection_request.client_name),
+            client_name,
+            pubsub_subscriptions,
             ..Default::default()
         },
     }
@@ -107,13 +99,121 @@ pub struct Client {
 }
 
 async fn run_with_timeout<T>(
-    timeout: Duration,
+    timeout: Option<Duration>,
     future: impl futures::Future<Output = RedisResult<T>> + Send,
 ) -> redis::RedisResult<T> {
-    tokio::time::timeout(timeout, future)
-        .await
-        .map_err(|_| io::Error::from(io::ErrorKind::TimedOut).into())
-        .and_then(|res| res)
+    match timeout {
+        Some(duration) => tokio::time::timeout(duration, future)
+            .await
+            .map_err(|_| io::Error::from(io::ErrorKind::TimedOut).into())
+            .and_then(|res| res),
+        None => future.await,
+    }
+}
+
+/// Extension to the request timeout for blocking commands to ensure we won't return with timeout error before the server responded
+const BLOCKING_CMD_TIMEOUT_EXTENSION: f64 = 0.5; // seconds
+
+enum TimeUnit {
+    Milliseconds = 1000,
+    Seconds = 1,
+}
+
+/// Enumeration representing different request timeout options.
+#[derive(Default, PartialEq, Debug)]
+enum RequestTimeoutOption {
+    // Indicates no timeout should be set for the request.
+    NoTimeout,
+    // Indicates the request timeout should be based on the client's configured timeout.
+    #[default]
+    ClientConfig,
+    // Indicates the request timeout should be based on the timeout specified in the blocking command.
+    BlockingCommand(Duration),
+}
+
+/// Helper function for parsing a timeout argument to f64.
+/// Attempts to parse the argument found at `timeout_idx` from bytes into an f64.
+fn parse_timeout_to_f64(cmd: &Cmd, timeout_idx: usize) -> RedisResult<f64> {
+    let create_err = |err_msg| {
+        RedisError::from((
+            ErrorKind::ResponseError,
+            err_msg,
+            format!(
+                "Expected to find timeout value at index {:?} for command {:?}.",
+                timeout_idx,
+                std::str::from_utf8(&cmd.command().unwrap_or_default()),
+            ),
+        ))
+    };
+    let timeout_bytes = cmd
+        .arg_idx(timeout_idx)
+        .ok_or(create_err("Couldn't find timeout index"))?;
+    let timeout_str = std::str::from_utf8(timeout_bytes)
+        .map_err(|_| create_err("Failed to parse the timeout argument to string"))?;
+    timeout_str
+        .parse::<f64>()
+        .map_err(|_| create_err("Failed to parse the timeout argument to f64"))
+}
+
+/// Attempts to get the timeout duration from the command argument at `timeout_idx`.
+/// If the argument can be parsed into a duration, it returns the duration in seconds with BlockingCmdTimeout.
+/// If the timeout argument value is zero, NoTimeout will be returned. Otherwise, ClientConfigTimeout is returned.
+fn get_timeout_from_cmd_arg(
+    cmd: &Cmd,
+    timeout_idx: usize,
+    time_unit: TimeUnit,
+) -> RedisResult<RequestTimeoutOption> {
+    let timeout_secs = parse_timeout_to_f64(cmd, timeout_idx)? / ((time_unit as i32) as f64);
+    if timeout_secs < 0.0 {
+        // Timeout cannot be negative, return the client's configured request timeout
+        Err(RedisError::from((
+            ErrorKind::ResponseError,
+            "Timeout cannot be negative",
+            format!("Received timeout = {:?}.", timeout_secs),
+        )))
+    } else if timeout_secs == 0.0 {
+        // `0` means we should set no timeout
+        Ok(RequestTimeoutOption::NoTimeout)
+    } else {
+        // We limit the maximum timeout due to restrictions imposed by Redis and the Duration crate
+        if timeout_secs > u32::MAX as f64 {
+            Err(RedisError::from((
+                ErrorKind::ResponseError,
+                "Timeout is out of range, max timeout is 2^32 - 1 (u32::MAX)",
+                format!("Received timeout = {:?}.", timeout_secs),
+            )))
+        } else {
+            // Extend the request timeout to ensure we don't timeout before receiving a response from the server.
+            Ok(RequestTimeoutOption::BlockingCommand(
+                Duration::from_secs_f64(
+                    (timeout_secs + BLOCKING_CMD_TIMEOUT_EXTENSION).min(u32::MAX as f64),
+                ),
+            ))
+        }
+    }
+}
+
+fn get_request_timeout(cmd: &Cmd, default_timeout: Duration) -> RedisResult<Option<Duration>> {
+    let command = cmd.command().unwrap_or_default();
+    let timeout = match command.as_slice() {
+        b"BLPOP" | b"BRPOP" | b"BLMOVE" | b"BZPOPMAX" | b"BZPOPMIN" | b"BRPOPLPUSH" => {
+            get_timeout_from_cmd_arg(cmd, cmd.args_iter().len() - 1, TimeUnit::Seconds)
+        }
+        b"BLMPOP" | b"BZMPOP" => get_timeout_from_cmd_arg(cmd, 1, TimeUnit::Seconds),
+        b"XREAD" | b"XREADGROUP" => cmd
+            .position(b"BLOCK")
+            .map(|idx| get_timeout_from_cmd_arg(cmd, idx + 1, TimeUnit::Milliseconds))
+            .unwrap_or(Ok(RequestTimeoutOption::ClientConfig)),
+        _ => Ok(RequestTimeoutOption::ClientConfig),
+    }?;
+
+    match timeout {
+        RequestTimeoutOption::NoTimeout => Ok(None),
+        RequestTimeoutOption::ClientConfig => Ok(Some(default_timeout)),
+        RequestTimeoutOption::BlockingCommand(blocking_cmd_duration) => {
+            Ok(Some(blocking_cmd_duration))
+        }
+    }
 }
 
 impl Client {
@@ -123,7 +223,13 @@ impl Client {
         routing: Option<RoutingInfo>,
     ) -> redis::RedisFuture<'a, Value> {
         let expected_type = expected_type_for_cmd(cmd);
-        run_with_timeout(self.request_timeout, async move {
+        let request_timeout = match get_request_timeout(cmd, self.request_timeout) {
+            Ok(request_timeout) => request_timeout,
+            Err(err) => {
+                return async { Err(err) }.boxed();
+            }
+        };
+        run_with_timeout(request_timeout, async move {
             match self.internal_client {
                 ClientWrapper::Standalone(ref mut client) => client.send_command(cmd).await,
 
@@ -159,7 +265,7 @@ impl Client {
                     return Err((
                         ErrorKind::ResponseError,
                         "Received non-array response for transaction",
-                        format!("Response: `{value:?}`"),
+                        format!("(response was {:?})", get_value_type(&value)),
                     )
                         .into());
                 }
@@ -201,7 +307,7 @@ impl Client {
     ) -> redis::RedisFuture<'a, Value> {
         let command_count = pipeline.cmd_iter().count();
         let offset = command_count + 1;
-        run_with_timeout(self.request_timeout, async move {
+        run_with_timeout(Some(self.request_timeout), async move {
             let values = match self.internal_client {
                 ClientWrapper::Standalone(ref mut client) => {
                     client.send_pipeline(pipeline, offset, 1).await
@@ -263,35 +369,41 @@ fn eval_cmd<T: Deref<Target = str>>(hash: &str, keys: Vec<T>, args: Vec<T>) -> C
     cmd
 }
 
-fn to_duration(time_in_millis: u32, default: Duration) -> Duration {
-    if time_in_millis > 0 {
-        Duration::from_millis(time_in_millis as u64)
-    } else {
-        default
-    }
+fn to_duration(time_in_millis: Option<u32>, default: Duration) -> Duration {
+    time_in_millis
+        .map(|val| Duration::from_millis(val as u64))
+        .unwrap_or(default)
 }
 
 async fn create_cluster_client(
     request: ConnectionRequest,
+    push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
 ) -> RedisResult<redis::cluster_async::ClusterConnection> {
     // TODO - implement timeout for each connection attempt
-    let tls_mode = request.tls_mode.enum_value_or_default();
+    let tls_mode = request.tls_mode.unwrap_or_default();
     let redis_connection_info = get_redis_connection_info(&request);
     let initial_nodes: Vec<_> = request
         .addresses
         .into_iter()
         .map(|address| get_connection_info(&address, tls_mode, redis_connection_info.clone()))
         .collect();
-    let read_from = request.read_from.enum_value().unwrap_or(ReadFrom::Primary);
-    let read_from_replicas = !matches!(read_from, ReadFrom::Primary,); // TODO - implement different read from replica strategies.
+    let read_from = request.read_from.unwrap_or_default();
+    let read_from_replicas = !matches!(read_from, ReadFrom::Primary); // TODO - implement different read from replica strategies.
+    let periodic_checks = match request.periodic_checks {
+        Some(PeriodicCheck::Disabled) => None,
+        Some(PeriodicCheck::Enabled) => Some(DEFAULT_PERIODIC_CHECKS_INTERVAL),
+        Some(PeriodicCheck::ManualInterval(interval)) => Some(interval),
+        None => Some(DEFAULT_PERIODIC_CHECKS_INTERVAL),
+    };
     let mut builder = redis::cluster::ClusterClientBuilder::new(initial_nodes)
         .connection_timeout(INTERNAL_CONNECTION_TIMEOUT);
     if read_from_replicas {
         builder = builder.read_from_replicas();
     }
-    builder = builder.use_protocol(convert_to_redis_protocol(
-        request.protocol.enum_value_or_default(),
-    ));
+    if let Some(interval_duration) = periodic_checks {
+        builder = builder.periodic_topology_checks(interval_duration);
+    }
+    builder = builder.use_protocol(request.protocol.unwrap_or_default());
     if let Some(client_name) = redis_connection_info.client_name {
         builder = builder.client_name(client_name);
     }
@@ -303,8 +415,11 @@ async fn create_cluster_client(
         };
         builder = builder.tls(tls);
     }
+    if let Some(pubsub_subscriptions) = redis_connection_info.pubsub_subscriptions {
+        builder = builder.pubsub_subscriptions(pubsub_subscriptions);
+    }
     let client = builder.build()?;
-    client.get_async_connection().await
+    client.get_async_connection(push_sender).await
 }
 
 #[derive(thiserror::Error)]
@@ -334,8 +449,11 @@ impl std::fmt::Display for ConnectionError {
     }
 }
 
-fn format_non_zero_value(name: &'static str, value: u32) -> String {
-    if value > 0 {
+fn format_optional_value<T>(name: &'static str, value: Option<T>) -> String
+where
+    T: std::fmt::Display,
+{
+    if let Some(value) = value {
         format!("\n{name}: {value}")
     } else {
         String::new()
@@ -351,7 +469,6 @@ fn sanitized_request_string(request: &ConnectionRequest) -> String {
         .join(", ");
     let tls_mode = request
         .tls_mode
-        .enum_value()
         .map(|tls_mode| {
             format!(
                 "\nTLS mode: {}",
@@ -368,43 +485,65 @@ fn sanitized_request_string(request: &ConnectionRequest) -> String {
     } else {
         "\nStandalone mode"
     };
-    let request_timeout = format_non_zero_value("Request timeout", request.request_timeout);
-    let database_id = format_non_zero_value("database ID", request.database_id);
+    let request_timeout = format_optional_value("Request timeout", request.request_timeout);
+    let database_id = format!("\ndatabase ID: {}", request.database_id);
     let rfr_strategy = request
         .read_from
-        .enum_value()
         .map(|rfr| {
             format!(
                 "\nRead from Replica mode: {}",
                 match rfr {
                     ReadFrom::Primary => "Only primary",
                     ReadFrom::PreferReplica => "Prefer replica",
-                    ReadFrom::LowestLatency => "Lowest latency",
-                    ReadFrom::AZAffinity => "Availability zone affinity",
                 }
             )
         })
         .unwrap_or_default();
-    let connection_retry_strategy = request.connection_retry_strategy.0.as_ref().map(|strategy|
+    let connection_retry_strategy = request.connection_retry_strategy.as_ref().map(|strategy|
             format!("\nreconnect backoff strategy: number of increasing duration retries: {}, base: {}, factor: {}",
         strategy.number_of_retries, strategy.exponent_base, strategy.factor)).unwrap_or_default();
-
     let protocol = request
         .protocol
-        .enum_value()
         .map(|protocol| format!("\nProtocol: {protocol:?}"))
         .unwrap_or_default();
-    let client_name = chars_to_string_option(&request.client_name)
+    let client_name = request
+        .client_name
+        .as_ref()
         .map(|client_name| format!("\nClient name: {client_name}"))
+        .unwrap_or_default();
+    let periodic_checks = if request.cluster_mode_enabled {
+        match request.periodic_checks {
+            Some(PeriodicCheck::Disabled) => "\nPeriodic Checks: Disabled".to_string(),
+            Some(PeriodicCheck::Enabled) => format!(
+                "\nPeriodic Checks: Enabled with default interval of {:?}",
+                DEFAULT_PERIODIC_CHECKS_INTERVAL
+            ),
+            Some(PeriodicCheck::ManualInterval(interval)) => format!(
+                "\nPeriodic Checks: Enabled with manual interval of {:?}s",
+                interval.as_secs()
+            ),
+            None => String::new(),
+        }
+    } else {
+        String::new()
+    };
+
+    let pubsub_subscriptions = request
+        .pubsub_subscriptions
+        .as_ref()
+        .map(|pubsub_subscriptions| format!("\nPubsub subscriptions: {pubsub_subscriptions:?}"))
         .unwrap_or_default();
 
     format!(
-        "\nAddresses: {addresses}{tls_mode}{cluster_mode}{request_timeout}{rfr_strategy}{connection_retry_strategy}{database_id}{protocol}{client_name}",
+        "\nAddresses: {addresses}{tls_mode}{cluster_mode}{request_timeout}{rfr_strategy}{connection_retry_strategy}{database_id}{protocol}{client_name}{periodic_checks}{pubsub_subscriptions}",
     )
 }
 
 impl Client {
-    pub async fn new(request: ConnectionRequest) -> Result<Self, ConnectionError> {
+    pub async fn new(
+        request: ConnectionRequest,
+        push_sender: Option<mpsc::UnboundedSender<PushInfo>>,
+    ) -> Result<Self, ConnectionError> {
         const DEFAULT_CLIENT_CREATION_TIMEOUT: Duration = Duration::from_secs(10);
 
         log_info(
@@ -414,13 +553,13 @@ impl Client {
         let request_timeout = to_duration(request.request_timeout, DEFAULT_RESPONSE_TIMEOUT);
         tokio::time::timeout(DEFAULT_CLIENT_CREATION_TIMEOUT, async move {
             let internal_client = if request.cluster_mode_enabled {
-                let client = create_cluster_client(request)
+                let client = create_cluster_client(request, push_sender)
                     .await
                     .map_err(ConnectionError::Cluster)?;
                 ClientWrapper::Cluster { client }
             } else {
                 ClientWrapper::Standalone(
-                    StandaloneClient::create_client(request)
+                    StandaloneClient::create_client(request, push_sender)
                         .await
                         .map_err(ConnectionError::Standalone)?,
                 )
@@ -462,5 +601,155 @@ impl GlideClientForTests for StandaloneClient {
         _routing: Option<RoutingInfo>,
     ) -> redis::RedisFuture<'a, redis::Value> {
         self.send_command(cmd).boxed()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use redis::Cmd;
+
+    use crate::client::{
+        get_request_timeout, RequestTimeoutOption, TimeUnit, BLOCKING_CMD_TIMEOUT_EXTENSION,
+    };
+
+    use super::get_timeout_from_cmd_arg;
+
+    #[test]
+    fn test_get_timeout_from_cmd_returns_correct_duration_int() {
+        let mut cmd = Cmd::new();
+        cmd.arg("BLPOP").arg("key1").arg("key2").arg("5");
+        let result = get_timeout_from_cmd_arg(&cmd, cmd.args_iter().len() - 1, TimeUnit::Seconds);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            RequestTimeoutOption::BlockingCommand(Duration::from_secs_f64(
+                5.0 + BLOCKING_CMD_TIMEOUT_EXTENSION
+            ))
+        );
+    }
+
+    #[test]
+    fn test_get_timeout_from_cmd_returns_correct_duration_float() {
+        let mut cmd = Cmd::new();
+        cmd.arg("BLPOP").arg("key1").arg("key2").arg(0.5);
+        let result = get_timeout_from_cmd_arg(&cmd, cmd.args_iter().len() - 1, TimeUnit::Seconds);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            RequestTimeoutOption::BlockingCommand(Duration::from_secs_f64(
+                0.5 + BLOCKING_CMD_TIMEOUT_EXTENSION
+            ))
+        );
+    }
+
+    #[test]
+    fn test_get_timeout_from_cmd_returns_correct_duration_milliseconds() {
+        let mut cmd = Cmd::new();
+        cmd.arg("XREAD").arg("BLOCK").arg("500").arg("key");
+        let result = get_timeout_from_cmd_arg(&cmd, 2, TimeUnit::Milliseconds);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            RequestTimeoutOption::BlockingCommand(Duration::from_secs_f64(
+                0.5 + BLOCKING_CMD_TIMEOUT_EXTENSION
+            ))
+        );
+    }
+
+    #[test]
+    fn test_get_timeout_from_cmd_returns_err_when_timeout_isnt_passed() {
+        let mut cmd = Cmd::new();
+        cmd.arg("BLPOP").arg("key1").arg("key2").arg("key3");
+        let result = get_timeout_from_cmd_arg(&cmd, cmd.args_iter().len() - 1, TimeUnit::Seconds);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        println!("{:?}", err);
+        assert!(err.to_string().to_lowercase().contains("index"), "{err}");
+    }
+
+    #[test]
+    fn test_get_timeout_from_cmd_returns_err_when_timeout_is_larger_than_u32_max() {
+        let mut cmd = Cmd::new();
+        cmd.arg("BLPOP")
+            .arg("key1")
+            .arg("key2")
+            .arg(u32::MAX as u64 + 1);
+        let result = get_timeout_from_cmd_arg(&cmd, cmd.args_iter().len() - 1, TimeUnit::Seconds);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        println!("{:?}", err);
+        assert!(err.to_string().to_lowercase().contains("u32"), "{err}");
+    }
+
+    #[test]
+    fn test_get_timeout_from_cmd_returns_err_when_timeout_is_negative() {
+        let mut cmd = Cmd::new();
+        cmd.arg("BLPOP").arg("key1").arg("key2").arg(-1);
+        let result = get_timeout_from_cmd_arg(&cmd, cmd.args_iter().len() - 1, TimeUnit::Seconds);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("negative"), "{err}");
+    }
+
+    #[test]
+    fn test_get_timeout_from_cmd_returns_no_timeout_when_zero_is_passed() {
+        let mut cmd = Cmd::new();
+        cmd.arg("BLPOP").arg("key1").arg("key2").arg(0);
+        let result = get_timeout_from_cmd_arg(&cmd, cmd.args_iter().len() - 1, TimeUnit::Seconds);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), RequestTimeoutOption::NoTimeout,);
+    }
+
+    #[test]
+    fn test_get_request_timeout_with_blocking_command_returns_cmd_arg_timeout() {
+        let mut cmd = Cmd::new();
+        cmd.arg("BLPOP").arg("key1").arg("key2").arg("500");
+        let result = get_request_timeout(&cmd, Duration::from_millis(100));
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            Some(Duration::from_secs_f64(
+                500.0 + BLOCKING_CMD_TIMEOUT_EXTENSION
+            ))
+        );
+
+        let mut cmd = Cmd::new();
+        cmd.arg("XREADGROUP").arg("BLOCK").arg("500").arg("key");
+        let result = get_request_timeout(&cmd, Duration::from_millis(100));
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            Some(Duration::from_secs_f64(
+                0.5 + BLOCKING_CMD_TIMEOUT_EXTENSION
+            ))
+        );
+
+        let mut cmd = Cmd::new();
+        cmd.arg("BLMPOP").arg("0.857").arg("key");
+        let result = get_request_timeout(&cmd, Duration::from_millis(100));
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            Some(Duration::from_secs_f64(
+                0.857 + BLOCKING_CMD_TIMEOUT_EXTENSION
+            ))
+        );
+    }
+
+    #[test]
+    fn test_get_request_timeout_non_blocking_command_returns_default_timeout() {
+        let mut cmd = Cmd::new();
+        cmd.arg("SET").arg("key").arg("value").arg("PX").arg("500");
+        let result = get_request_timeout(&cmd, Duration::from_millis(100));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Some(Duration::from_millis(100)));
+
+        let mut cmd = Cmd::new();
+        cmd.arg("XREADGROUP").arg("key");
+        let result = get_request_timeout(&cmd, Duration::from_millis(100));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Some(Duration::from_millis(100)));
     }
 }

@@ -237,7 +237,7 @@ def next_free_port(
         try:
             port = random.randint(min_port, max_port)
             logging.debug(f"Trying port {port}")
-            sock.bind(("", port))
+            sock.bind(("127.0.0.1", port))
             sock.close()
             toc = time.perf_counter()
             logging.debug(f"next_free_port() is {port} Elapsed time: {toc - tic:0.4f}")
@@ -426,7 +426,7 @@ def create_cluster(
         stderr=subprocess.PIPE,
         text=True,
     )
-    output, err = p.communicate(timeout=20)
+    output, err = p.communicate(timeout=40)
     if err or "[OK] All 16384 slots covered." not in output:
         raise Exception(f"Failed to create cluster: {err if err else output}")
 
@@ -497,7 +497,7 @@ def wait_for_a_message_in_redis_logs(
             continue
         log_file = f"{dir}/redis.log"
 
-        if server_ports and str(dir) not in server_ports:
+        if server_ports and os.path.basename(os.path.normpath(dir)) not in server_ports:
             continue
         if not wait_for_message(log_file, message, 10):
             raise Exception(
@@ -963,7 +963,9 @@ def main():
         tic = time.perf_counter()
         cluster_prefix = f"tls-{args.prefix}" if args.tls else args.prefix
         cluster_folder = create_cluster_folder(args.folder_path, cluster_prefix)
-        logging.info(f"{datetime.now(timezone.utc)} Starting script for cluster {cluster_folder}")
+        logging.info(
+            f"{datetime.now(timezone.utc)} Starting script for cluster {cluster_folder}"
+        )
         logfile = (
             f"{cluster_folder}/cluster_manager.log"
             if not args.logfile

@@ -4,16 +4,16 @@
 use super::rotating_buffer::RotatingBuffer;
 use crate::client::Client;
 use crate::connection_request::ConnectionRequest;
+use crate::errors::{error_message, error_type, RequestErrorType};
 use crate::redis_request::{
-    command, redis_request, Command, RedisRequest, RequestType, Routes, ScriptInvocation,
-    SlotTypes, Transaction,
+    command, redis_request, Command, RedisRequest, Routes, ScriptInvocation, SlotTypes, Transaction,
 };
 use crate::response;
 use crate::response::Response;
 use crate::retry_strategies::get_fixed_interval_backoff;
+use bytes::Bytes;
 use directories::BaseDirs;
 use dispose::{Disposable, Dispose};
-use futures::stream::StreamExt;
 use logger_core::{log_debug, log_error, log_info, log_trace, log_warn};
 use protobuf::Message;
 use redis::cluster_routing::{
@@ -21,9 +21,7 @@ use redis::cluster_routing::{
 };
 use redis::cluster_routing::{ResponsePolicy, Routable};
 use redis::RedisError;
-use redis::{cmd, Cmd, Value};
-use signal_hook::consts::signal::*;
-use signal_hook_tokio::Signals;
+use redis::{Cmd, PushInfo, Value};
 use std::cell::Cell;
 use std::rc::Rc;
 use std::{env, str};
@@ -32,6 +30,7 @@ use thiserror::Error;
 use tokio::io::ErrorKind::AddrInUse;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::runtime::Builder;
+use tokio::sync::mpsc;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::Mutex;
 use tokio::task;
@@ -186,6 +185,7 @@ async fn write_result(
 ) -> Result<(), io::Error> {
     let mut response = Response::new();
     response.callback_idx = callback_index;
+    response.is_push = false;
     response.value = match resp_result {
         Ok(Value::Okay) => Some(response::response::Value::ConstantResponse(
             response::ConstantResponse::OK.into(),
@@ -217,28 +217,20 @@ async fn write_result(
             Some(response::response::Value::RequestError(request_error))
         }
         Err(ClienUsageError::Redis(err)) => {
-            let error_message = err.to_string();
+            let error_message = error_message(&err);
             log_warn("received error", error_message.as_str());
             log_debug("received error", format!("for callback {}", callback_index));
-            let mut request_error = response::RequestError::default();
-            if err.is_connection_dropped() {
-                request_error.type_ = response::RequestErrorType::Disconnect.into();
-                request_error.message = format!(
-                    "Received connection error `{error_message}`. Will attempt to reconnect"
-                )
-                .into();
-            } else if err.is_timeout() {
-                request_error.type_ = response::RequestErrorType::Timeout.into();
-                request_error.message = error_message.into();
-            } else {
-                request_error.type_ = match err.kind() {
-                    redis::ErrorKind::ExecAbortError => {
-                        response::RequestErrorType::ExecAbort.into()
-                    }
-                    _ => response::RequestErrorType::Unspecified.into(),
-                };
-                request_error.message = error_message.into();
-            }
+            let request_error = response::RequestError {
+                type_: match error_type(&err) {
+                    RequestErrorType::Unspecified => response::RequestErrorType::Unspecified,
+                    RequestErrorType::ExecAbort => response::RequestErrorType::ExecAbort,
+                    RequestErrorType::Timeout => response::RequestErrorType::Timeout,
+                    RequestErrorType::Disconnect => response::RequestErrorType::Disconnect,
+                }
+                .into(),
+                message: error_message.into(),
+                ..Default::default()
+            };
             Some(response::response::Value::RequestError(request_error))
         }
     };
@@ -267,100 +259,9 @@ async fn write_to_writer(response: Response, writer: &Rc<Writer>) -> Result<(), 
     }
 }
 
-fn get_two_word_command(first: &str, second: &str) -> Cmd {
-    let mut cmd = cmd(first);
-    cmd.arg(second);
-    cmd
-}
-
 fn get_command(request: &Command) -> Option<Cmd> {
-    let request_enum = request
-        .request_type
-        .enum_value_or(RequestType::InvalidRequest);
-    match request_enum {
-        RequestType::InvalidRequest => None,
-        RequestType::CustomCommand => Some(Cmd::new()),
-        RequestType::GetString => Some(cmd("GET")),
-        RequestType::SetString => Some(cmd("SET")),
-        RequestType::Ping => Some(cmd("PING")),
-        RequestType::Info => Some(cmd("INFO")),
-        RequestType::Del => Some(cmd("DEL")),
-        RequestType::Select => Some(cmd("SELECT")),
-        RequestType::ConfigGet => Some(get_two_word_command("CONFIG", "GET")),
-        RequestType::ConfigSet => Some(get_two_word_command("CONFIG", "SET")),
-        RequestType::ConfigResetStat => Some(get_two_word_command("CONFIG", "RESETSTAT")),
-        RequestType::ConfigRewrite => Some(get_two_word_command("CONFIG", "REWRITE")),
-        RequestType::ClientGetName => Some(get_two_word_command("CLIENT", "GETNAME")),
-        RequestType::ClientGetRedir => Some(get_two_word_command("CLIENT", "GETREDIR")),
-        RequestType::ClientId => Some(get_two_word_command("CLIENT", "ID")),
-        RequestType::ClientInfo => Some(get_two_word_command("CLIENT", "INFO")),
-        RequestType::ClientKill => Some(get_two_word_command("CLIENT", "KILL")),
-        RequestType::ClientList => Some(get_two_word_command("CLIENT", "LIST")),
-        RequestType::ClientNoEvict => Some(get_two_word_command("CLIENT", "NO-EVICT")),
-        RequestType::ClientNoTouch => Some(get_two_word_command("CLIENT", "NO-TOUCH")),
-        RequestType::ClientPause => Some(get_two_word_command("CLIENT", "PAUSE")),
-        RequestType::ClientReply => Some(get_two_word_command("CLIENT", "REPLY")),
-        RequestType::ClientSetInfo => Some(get_two_word_command("CLIENT", "SETINFO")),
-        RequestType::ClientSetName => Some(get_two_word_command("CLIENT", "SETNAME")),
-        RequestType::ClientUnblock => Some(get_two_word_command("CLIENT", "UNBLOCK")),
-        RequestType::ClientUnpause => Some(get_two_word_command("CLIENT", "UNPAUSE")),
-        RequestType::Expire => Some(cmd("EXPIRE")),
-        RequestType::HashSet => Some(cmd("HSET")),
-        RequestType::HashGet => Some(cmd("HGET")),
-        RequestType::HashDel => Some(cmd("HDEL")),
-        RequestType::HashExists => Some(cmd("HEXISTS")),
-        RequestType::MSet => Some(cmd("MSET")),
-        RequestType::MGet => Some(cmd("MGET")),
-        RequestType::Incr => Some(cmd("INCR")),
-        RequestType::IncrBy => Some(cmd("INCRBY")),
-        RequestType::IncrByFloat => Some(cmd("INCRBYFLOAT")),
-        RequestType::Decr => Some(cmd("DECR")),
-        RequestType::DecrBy => Some(cmd("DECRBY")),
-        RequestType::HashGetAll => Some(cmd("HGETALL")),
-        RequestType::HashMSet => Some(cmd("HMSET")),
-        RequestType::HashMGet => Some(cmd("HMGET")),
-        RequestType::HashIncrBy => Some(cmd("HINCRBY")),
-        RequestType::HashIncrByFloat => Some(cmd("HINCRBYFLOAT")),
-        RequestType::LPush => Some(cmd("LPUSH")),
-        RequestType::LPop => Some(cmd("LPOP")),
-        RequestType::RPush => Some(cmd("RPUSH")),
-        RequestType::RPop => Some(cmd("RPOP")),
-        RequestType::LLen => Some(cmd("LLEN")),
-        RequestType::LRem => Some(cmd("LREM")),
-        RequestType::LRange => Some(cmd("LRANGE")),
-        RequestType::LTrim => Some(cmd("LTRIM")),
-        RequestType::SAdd => Some(cmd("SADD")),
-        RequestType::SRem => Some(cmd("SREM")),
-        RequestType::SMembers => Some(cmd("SMEMBERS")),
-        RequestType::SCard => Some(cmd("SCARD")),
-        RequestType::PExpireAt => Some(cmd("PEXPIREAT")),
-        RequestType::PExpire => Some(cmd("PEXPIRE")),
-        RequestType::ExpireAt => Some(cmd("EXPIREAT")),
-        RequestType::Exists => Some(cmd("EXISTS")),
-        RequestType::Unlink => Some(cmd("UNLINK")),
-        RequestType::TTL => Some(cmd("TTL")),
-        RequestType::Zadd => Some(cmd("ZADD")),
-        RequestType::Zrem => Some(cmd("ZREM")),
-        RequestType::Zrange => Some(cmd("ZRANGE")),
-        RequestType::Zcard => Some(cmd("ZCARD")),
-        RequestType::Zcount => Some(cmd("ZCOUNT")),
-        RequestType::ZIncrBy => Some(cmd("ZINCRBY")),
-        RequestType::ZScore => Some(cmd("ZSCORE")),
-        RequestType::Type => Some(cmd("TYPE")),
-        RequestType::HLen => Some(cmd("HLEN")),
-        RequestType::Echo => Some(cmd("ECHO")),
-        RequestType::ZPopMin => Some(cmd("ZPOPMIN")),
-        RequestType::Strlen => Some(cmd("STRLEN")),
-        RequestType::Lindex => Some(cmd("LINDEX")),
-        RequestType::ZPopMax => Some(cmd("ZPOPMAX")),
-        RequestType::XAck => Some(cmd("XACK")),
-        RequestType::XAdd => Some(cmd("XADD")),
-        RequestType::XReadGroup => Some(cmd("XREADGROUP")),
-        RequestType::XRead => Some(cmd("XREAD")),
-        RequestType::XGroupCreate => Some(get_two_word_command("XGROUP", "CREATE")),
-        RequestType::XGroupDestroy => Some(get_two_word_command("XGROUP", "DESTROY")),
-        RequestType::XTrim => Some(cmd("XTRIM")),
-    }
+    let request_type: crate::request_type::RequestType = request.request_type.into();
+    request_type.get_command()
 }
 
 fn get_redis_command(command: &Command) -> Result<Cmd, ClienUsageError> {
@@ -374,13 +275,13 @@ fn get_redis_command(command: &Command) -> Result<Cmd, ClienUsageError> {
     match &command.args {
         Some(command::Args::ArgsArray(args_vec)) => {
             for arg in args_vec.args.iter() {
-                cmd.arg(arg.as_bytes());
+                cmd.arg(arg.as_ref());
             }
         }
         Some(command::Args::ArgsVecPointer(pointer)) => {
-            let res = *unsafe { Box::from_raw(*pointer as *mut Vec<String>) };
+            let res = *unsafe { Box::from_raw(*pointer as *mut Vec<Bytes>) };
             for arg in res {
-                cmd.arg(arg.as_bytes());
+                cmd.arg(arg.as_ref());
             }
         }
         None => {
@@ -574,8 +475,9 @@ pub fn close_socket(socket_path: &String) {
 async fn create_client(
     writer: &Rc<Writer>,
     request: ConnectionRequest,
+    push_tx: Option<mpsc::UnboundedSender<PushInfo>>,
 ) -> Result<Client, ClientCreationError> {
-    let client = match Client::new(request).await {
+    let client = match Client::new(request.into(), push_tx).await {
         Ok(client) => client,
         Err(err) => return Err(ClientCreationError::ConnectionError(err)),
     };
@@ -586,13 +488,14 @@ async fn create_client(
 async fn wait_for_connection_configuration_and_create_client(
     client_listener: &mut UnixStreamListener,
     writer: &Rc<Writer>,
+    push_tx: Option<mpsc::UnboundedSender<PushInfo>>,
 ) -> Result<Client, ClientCreationError> {
     // Wait for the server's address
     match client_listener.next_values::<ConnectionRequest>().await {
         Closed(reason) => Err(ClientCreationError::SocketListenerClosed(reason)),
         ReceivedValues(mut received_requests) => {
             if let Some(request) = received_requests.pop() {
-                create_client(writer, request).await
+                create_client(writer, request, push_tx).await
             } else {
                 Err(ClientCreationError::UnhandledError(
                     "No received requests".to_string(),
@@ -619,6 +522,35 @@ async fn read_values_loop(
     }
 }
 
+async fn push_manager_loop(mut push_rx: mpsc::UnboundedReceiver<PushInfo>, writer: Rc<Writer>) {
+    loop {
+        let result = push_rx.recv().await;
+        match result {
+            None => {
+                log_trace("push manager loop", "got None as from push manager");
+                return;
+            }
+            Some(push_msg) => {
+                log_debug("push manager loop", format!("got PushInfo: {:?}", push_msg));
+                let mut response = Response::new();
+                response.callback_idx = 0; // callback_idx is not used with push notifications
+                response.is_push = true;
+                response.value = {
+                    let push_val = Value::Push {
+                        kind: (push_msg.kind),
+                        data: (push_msg.data),
+                    };
+                    let pointer = Box::leak(Box::new(push_val));
+                    let raw_pointer = pointer as *mut redis::Value;
+                    Some(response::response::Value::RespPointer(raw_pointer as u64))
+                };
+
+                _ = write_to_writer(response, &writer).await;
+            }
+        }
+    }
+}
+
 async fn listen_on_client_stream(socket: UnixStream) {
     let socket = Rc::new(socket);
     // Spawn a new task to listen on this client's stream
@@ -626,14 +558,18 @@ async fn listen_on_client_stream(socket: UnixStream) {
     let mut client_listener = UnixStreamListener::new(socket.clone());
     let accumulated_outputs = Cell::new(Vec::new());
     let (sender, mut receiver) = channel(1);
+    let (push_tx, push_rx) = tokio::sync::mpsc::unbounded_channel();
     let writer = Rc::new(Writer {
         socket,
         lock: write_lock,
         accumulated_outputs,
         closing_sender: sender,
     });
-    let client_creation =
-        wait_for_connection_configuration_and_create_client(&mut client_listener, &writer);
+    let client_creation = wait_for_connection_configuration_and_create_client(
+        &mut client_listener,
+        &writer,
+        Some(push_tx),
+    );
     let client = match client_creation.await {
         Ok(conn) => conn,
         Err(ClientCreationError::SocketListenerClosed(ClosingReason::ReadSocketClosed)) => {
@@ -684,6 +620,9 @@ async fn listen_on_client_stream(socket: UnixStream) {
                 } else {
                     log_trace("client closing", "writer closed");
                 }
+            },
+            _ = push_manager_loop(push_rx, writer.clone()) => {
+                log_trace("client closing", "push manager closed");
             }
     }
     log_trace("client closing", "closing connection");
@@ -776,19 +715,17 @@ impl SocketListener {
         init_callback(Ok(self.socket_path.clone()));
         let local_set_pool = LocalPoolHandle::new(num_cpus::get());
         loop {
-            tokio::select! {
-                listen_v = listener.accept() => {
-                    if let Ok((stream, _addr)) = listen_v {
-                        // New client
-                        local_set_pool.spawn_pinned(move || {
-                            listen_on_client_stream(stream)
-                        });
-                    } else if listen_v.is_err() {
-                        return
-                    }
-                },
-                // Interrupt was received, close the socket
-                _ = handle_signals() => return
+            match listener.accept().await {
+                Ok((stream, _addr)) => {
+                    local_set_pool.spawn_pinned(move || listen_on_client_stream(stream));
+                }
+                Err(err) => {
+                    log_debug(
+                        "listen_on_socket",
+                        format!("Socket closed with error: `{err}`"),
+                    );
+                    return;
+                }
             }
         }
     }
@@ -872,23 +809,6 @@ pub fn get_socket_path_from_name(socket_name: String) -> String {
 pub fn get_socket_path() -> String {
     let socket_name = format!("{}-{}", SOCKET_FILE_NAME, std::process::id());
     get_socket_path_from_name(socket_name)
-}
-
-async fn handle_signals() {
-    // Handle Unix signals
-    let mut signals =
-        Signals::new([SIGTERM, SIGQUIT, SIGINT, SIGHUP]).expect("Failed creating signals");
-    loop {
-        if let Some(signal) = signals.next().await {
-            match signal {
-                SIGTERM | SIGQUIT | SIGINT | SIGHUP => {
-                    log_info("connection", format!("Signal {signal:?} received"));
-                    return;
-                }
-                _ => continue,
-            }
-        }
-    }
 }
 
 /// This function is exposed only for the sake of testing with a nonstandard `socket_path`.

@@ -12,10 +12,11 @@ The GLIDE Node wrapper consists of both TypeScript and Rust code. Rust bindings 
 
 Software Dependencies
 
-> Note: Currently, we only support npm major version 8. f you have a later version installed, you can downgrade it with `npm i -g npm@8`.
-> If your NodeJS version is below the supported version specified in the client's [documentation](https://github.com/aws/glide-for-redis/blob/main/node/README.md#nodejs-supported-version), you can upgrade it using [NVM](https://github.com/nvm-sh/nvm?tab=readme-ov-file#install--update-script).
+##### **Note:** Nodejs Supported Version
 
--   npm v8
+If your Nodejs version is below the supported version specified in the client's [documentation](https://github.com/aws/glide-for-redis/blob/main/node/README.md#nodejs-supported-version), you can upgrade it using [NVM](https://github.com/nvm-sh/nvm?tab=readme-ov-file#install--update-script).
+
+-   npm
 -   git
 -   GCC
 -   pkg-config
@@ -29,17 +30,19 @@ Software Dependencies
 ```bash
 sudo apt update -y
 sudo apt install -y nodejs npm git gcc pkg-config protobuf-compiler openssl libssl-dev
-npm i -g npm@8
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
+# Check the installed node version
+node -v
 ```
+
+> **Note:** Ensure that you installed a supported Node.js version. For Ubuntu 22.04 or earlier, please refer to the instructions [here](#note-nodejs-supported-version) to upgrade your Node.js version.
 
 **Dependencies installation for CentOS**
 
 ```bash
 sudo yum update -y
 sudo yum install -y nodejs git gcc pkgconfig protobuf-compiler openssl openssl-devel gettext
-npm i -g npm@8
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 ```
@@ -49,7 +52,6 @@ source "$HOME/.cargo/env"
 ```bash
 brew update
 brew install nodejs git gcc pkgconfig protobuf openssl
-npm i -g npm@8
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 ```
@@ -58,17 +60,17 @@ source "$HOME/.cargo/env"
 
 Before starting this step, make sure you've installed all software requirments.
 
-1.  Clone the repository:
+1. Clone the repository:
     ```bash
     VERSION=0.1.0 # You can modify this to other released version or set it to "main" to get the unstable branch
     git clone --branch ${VERSION} https://github.com/aws/glide-for-redis.git
     cd glide-for-redis
     ```
-2.  Initialize git submodule:
+2. Initialize git submodule:
     ```bash
     git submodule update --init --recursive
     ```
-3.  Install all node dependencies:
+3. Install all node dependencies:
     ```bash
     cd node
     npm i
@@ -76,35 +78,37 @@ Before starting this step, make sure you've installed all software requirments.
     npm i
     cd ..
     ```
-4.  Build the Node wrapper:
-    Choose a build option from the following and run it from the `node` folder:
+4. Build the Node wrapper (Choose a build option from the following and run it from the `node` folder):
 
-        1. Build in release mode, stripped from all debug symbols (optimized and minimized binary size):
+    1. Build in release mode, stripped from all debug symbols (optimized and minimized binary size):
 
-            ```bash
-            npm run build:release
-            ```
+    ```bash
+    npm run build:release
+    ```
 
-        2. Build in release mode with debug symbols (optimized but large binary size):
+    2. Build in release mode with debug symbols (optimized but large binary size):
 
-            ```bash
-            npm run build:benchmark
-            ```
+    ```bash
+    npm run build:benchmark
+    ```
 
-        3. For testing purposes, you can execute an unoptimized but fast build using:
-           `bash
+    3. For testing purposes, you can execute an unoptimized but fast build using:
 
+    ```bash
     npm run build
-    `       Once building completed, you'll find the compiled JavaScript code in the`./build-ts` folder.
+    ```
 
-5.  Run tests:
+    Once building completed, you'll find the compiled JavaScript code in the`./build-ts` folder.
+
+5. Run tests:
     1. Ensure that you have installed redis-server and redis-cli on your host. You can find the Redis installation guide at the following link: [Redis Installation Guide](https://redis.io/docs/install/install-redis/install-redis-on-linux/).
     2. Execute the following command from the node folder:
         ```bash
+        npm run build # make sure we have a debug build compiled first
         npm test
         ```
-6.  Integrating the built GLIDE package into your project:
-    Add the package to your project using the folder path with the command `npm install <path to GLIDE>/node`.
+6. Integrating the built GLIDE package into your project:
+   Add the package to your project using the folder path with the command `npm install <path to GLIDE>/node`.
 
 -   For a fast build, execute `npm run build`. This will perform a full, unoptimized build, which is suitable for developing tests. Keep in mind that performance is significantly affected in an unoptimized build, so it's required to build with the `build:release` or `build:benchmark` option when measuring performance.
 -   If your modifications are limited to the TypeScript code, run `npm run build-external` to build the external package without rebuilding the internal package.
@@ -112,6 +116,10 @@ Before starting this step, make sure you've installed all software requirments.
 -   To generate Node's protobuf files, execute `npm run build-protobuf`. Keep in mind that protobuf files are generated as part of full builds (e.g., `build`, `build:release`, etc.).
 
 > Note: Once building completed, you'll find the compiled JavaScript code in the `node/build-ts` folder.
+
+### Troubleshooting
+
+-   If the build fails after running `npx tsc` because `glide-rs` isn't found, check if your npm version is in the range 9.0.0-9.4.1, and if so, upgrade it. 9.4.2 contains a fix to a change introduced in 9.0.0 that is required in order to build the library.
 
 ### Test
 
@@ -150,9 +158,10 @@ Development on the Node wrapper may involve changes in either the TypeScript or 
 1. TypeScript
     ```bash
     # Run from the `node` folder
-    npm install eslint-plugin-import@latest  @typescript-eslint/parser @typescript-eslint/eslint-plugin eslint-plugin-tsdoc eslint typescript eslint-plugin-import@latest eslint-config-prettier
+    npm install eslint-plugin-import@latest  @typescript-eslint/parser @typescript-eslint/eslint-plugin eslint-plugin-tsdoc eslint typescript eslint-plugin-import@latest eslint-config-prettier prettier
     npm i
     npx eslint . --max-warnings=0
+    npx prettier --check .
     ```
 2. Rust
     ```bash

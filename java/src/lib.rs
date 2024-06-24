@@ -3,7 +3,7 @@
  */
 use glide_core::start_socket_listener;
 
-use jni::objects::{JClass, JObject, JObjectArray, JThrowable};
+use jni::objects::{JClass, JObject, JObjectArray, JString, JThrowable};
 use jni::sys::jlong;
 use jni::JNIEnv;
 use log::error;
@@ -16,7 +16,11 @@ mod ffi_test;
 pub use ffi_test::*;
 
 // TODO: Consider caching method IDs here in a static variable (might need RwLock to mutate)
-fn redis_value_to_java<'local>(env: &mut JNIEnv<'local>, val: Value) -> JObject<'local> {
+fn redis_value_to_java<'local>(
+    env: &mut JNIEnv<'local>,
+    val: Value,
+    encoding_utf8: bool,
+) -> JObject<'local> {
     match val {
         Value::Nil => JObject::null(),
         Value::SimpleString(str) => JObject::from(env.new_string(str).unwrap()),
@@ -24,20 +28,37 @@ fn redis_value_to_java<'local>(env: &mut JNIEnv<'local>, val: Value) -> JObject<
         Value::Int(num) => env
             .new_object("java/lang/Long", "(J)V", &[num.into()])
             .unwrap(),
-        Value::BulkString(data) => match std::str::from_utf8(data.as_ref()) {
-            Ok(val) => JObject::from(env.new_string(val).unwrap()),
-            Err(_err) => {
-                let _ = env.throw("Error decoding Unicode data");
-                JObject::null()
+        Value::BulkString(data) => {
+            if encoding_utf8 {
+                let Ok(utf8_str) = String::from_utf8(data) else {
+                    let _ = env.throw("Failed to construct UTF-8 string");
+                    return JObject::null();
+                };
+                match env.new_string(utf8_str) {
+                    Ok(string) => JObject::from(string),
+                    Err(e) => {
+                        let _ = env.throw(format!(
+                            "Failed to construct Java UTF-8 string from Rust UTF-8 string. {:?}",
+                            e
+                        ));
+                        JObject::null()
+                    }
+                }
+            } else {
+                let Ok(bytearr) = env.byte_array_from_slice(&data) else {
+                    let _ = env.throw("Failed to allocate byte array");
+                    return JObject::null();
+                };
+                bytearr.into()
             }
-        },
+        }
         Value::Array(array) => {
             let items: JObjectArray = env
                 .new_object_array(array.len() as i32, "java/lang/Object", JObject::null())
                 .unwrap();
 
             for (i, item) in array.into_iter().enumerate() {
-                let java_value = redis_value_to_java(env, item);
+                let java_value = redis_value_to_java(env, item, encoding_utf8);
                 env.set_object_array_element(&items, i as i32, java_value)
                     .unwrap();
             }
@@ -45,13 +66,15 @@ fn redis_value_to_java<'local>(env: &mut JNIEnv<'local>, val: Value) -> JObject<
             items.into()
         }
         Value::Map(map) => {
-            let hashmap = env.new_object("java/util/HashMap", "()V", &[]).unwrap();
+            let linked_hash_map = env
+                .new_object("java/util/LinkedHashMap", "()V", &[])
+                .unwrap();
 
             for (key, value) in map {
-                let java_key = redis_value_to_java(env, key);
-                let java_value = redis_value_to_java(env, value);
+                let java_key = redis_value_to_java(env, key, encoding_utf8);
+                let java_value = redis_value_to_java(env, value, encoding_utf8);
                 env.call_method(
-                    &hashmap,
+                    &linked_hash_map,
                     "put",
                     "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
                     &[(&java_key).into(), (&java_value).into()],
@@ -59,10 +82,10 @@ fn redis_value_to_java<'local>(env: &mut JNIEnv<'local>, val: Value) -> JObject<
                 .unwrap();
             }
 
-            hashmap
+            linked_hash_map
         }
         Value::Double(float) => env
-            .new_object("java/lang/Double", "(D)V", &[float.into_inner().into()])
+            .new_object("java/lang/Double", "(D)V", &[float.into()])
             .unwrap(),
         Value::Boolean(bool) => env
             .new_object("java/lang/Boolean", "(Z)V", &[bool.into()])
@@ -73,7 +96,7 @@ fn redis_value_to_java<'local>(env: &mut JNIEnv<'local>, val: Value) -> JObject<
             let set = env.new_object("java/util/HashSet", "()V", &[]).unwrap();
 
             for elem in array {
-                let java_value = redis_value_to_java(env, elem);
+                let java_value = redis_value_to_java(env, elem, encoding_utf8);
                 env.call_method(
                     &set,
                     "add",
@@ -100,7 +123,19 @@ pub extern "system" fn Java_glide_ffi_resolvers_RedisValueResolver_valueFromPoin
     pointer: jlong,
 ) -> JObject<'local> {
     let value = unsafe { Box::from_raw(pointer as *mut Value) };
-    redis_value_to_java(&mut env, *value)
+    redis_value_to_java(&mut env, *value, true)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_glide_ffi_resolvers_RedisValueResolver_valueFromPointerBinary<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    pointer: jlong,
+) -> JObject<'local> {
+    let value = unsafe { Box::from_raw(pointer as *mut Value) };
+    redis_value_to_java(&mut env, *value, false)
 }
 
 #[no_mangle]
@@ -152,4 +187,25 @@ fn throw_java_exception(mut env: JNIEnv, message: String) {
             );
         }
     };
+}
+
+#[no_mangle]
+pub extern "system" fn Java_glide_ffi_resolvers_ScriptResolver_storeScript<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    code: JString,
+) -> JObject<'local> {
+    let code_str: String = env.get_string(&code).unwrap().into();
+    let hash = glide_core::scripts_container::add_script(&code_str);
+    JObject::from(env.new_string(hash).unwrap())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_glide_ffi_resolvers_ScriptResolver_dropScript<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    hash: JString,
+) {
+    let hash_str: String = env.get_string(&hash).unwrap().into();
+    glide_core::scripts_container::remove_script(&hash_str);
 }

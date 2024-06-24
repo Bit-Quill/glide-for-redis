@@ -1,6 +1,9 @@
 /** Copyright GLIDE-for-Redis Project Contributors - SPDX Identifier: Apache-2.0 */
 package glide.managers;
 
+import static glide.api.models.configuration.RequestRoutingConfiguration.SimpleMultiNodeRoute.ALL_NODES;
+import static glide.api.models.configuration.RequestRoutingConfiguration.SimpleMultiNodeRoute.ALL_PRIMARIES;
+import static glide.api.models.configuration.RequestRoutingConfiguration.SimpleSingleNodeRoute.RANDOM;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -14,22 +17,28 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static redis_request.RedisRequestOuterClass.RequestType.CustomCommand;
 
+import com.google.protobuf.ByteString;
 import glide.api.models.ClusterTransaction;
 import glide.api.models.Transaction;
-import glide.api.models.configuration.RequestRoutingConfiguration.SimpleRoute;
+import glide.api.models.configuration.RequestRoutingConfiguration.ByAddressRoute;
+import glide.api.models.configuration.RequestRoutingConfiguration.Route;
 import glide.api.models.configuration.RequestRoutingConfiguration.SlotIdRoute;
 import glide.api.models.configuration.RequestRoutingConfiguration.SlotKeyRoute;
 import glide.api.models.configuration.RequestRoutingConfiguration.SlotType;
+import glide.api.models.exceptions.RequestException;
 import glide.connectors.handlers.ChannelHandler;
 import java.util.LinkedList;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.stream.Stream;
 import lombok.SneakyThrows;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import redis_request.RedisRequestOuterClass.RedisRequest;
 import redis_request.RedisRequestOuterClass.SimpleRoutes;
@@ -60,6 +69,7 @@ public class CommandManagerTest {
         CompletableFuture<Response> future = new CompletableFuture<>();
         future.complete(respPointerResponse);
         when(channelHandler.write(any(), anyBoolean())).thenReturn(future);
+        when(channelHandler.isClosed()).thenReturn(false);
 
         // exercise
         CompletableFuture<Object> result =
@@ -81,6 +91,7 @@ public class CommandManagerTest {
         CompletableFuture<Response> future = new CompletableFuture<>();
         future.complete(respPointerResponse);
         when(channelHandler.write(any(), anyBoolean())).thenReturn(future);
+        when(channelHandler.isClosed()).thenReturn(false);
 
         // exercise
         CompletableFuture<Object> result =
@@ -107,6 +118,7 @@ public class CommandManagerTest {
         CompletableFuture<Response> future = new CompletableFuture<>();
         future.complete(respPointerResponse);
         when(channelHandler.write(any(), anyBoolean())).thenReturn(future);
+        when(channelHandler.isClosed()).thenReturn(false);
 
         // exercise
         CompletableFuture<Object> result =
@@ -121,11 +133,16 @@ public class CommandManagerTest {
         assertEquals(testString, respPointer);
     }
 
+    public static Stream<Arguments> getEnumRoutes() {
+        return Stream.of(Arguments.of(RANDOM), Arguments.of(ALL_NODES), Arguments.of(ALL_PRIMARIES));
+    }
+
     @ParameterizedTest
-    @EnumSource(value = SimpleRoute.class)
-    public void prepare_request_with_simple_routes(SimpleRoute routeType) {
+    @MethodSource("getEnumRoutes")
+    public void prepare_request_with_simple_routes(Route routeType) {
         CompletableFuture<Response> future = new CompletableFuture<>();
         when(channelHandler.write(any(), anyBoolean())).thenReturn(future);
+        when(channelHandler.isClosed()).thenReturn(false);
 
         ArgumentCaptor<RedisRequest.Builder> captor =
                 ArgumentCaptor.forClass(RedisRequest.Builder.class);
@@ -136,9 +153,9 @@ public class CommandManagerTest {
 
         var protobufToClientRouteMapping =
                 Map.of(
-                        SimpleRoutes.AllNodes, SimpleRoute.ALL_NODES,
-                        SimpleRoutes.AllPrimaries, SimpleRoute.ALL_PRIMARIES,
-                        SimpleRoutes.Random, SimpleRoute.RANDOM);
+                        SimpleRoutes.AllNodes, ALL_NODES,
+                        SimpleRoutes.AllPrimaries, ALL_PRIMARIES,
+                        SimpleRoutes.Random, RANDOM);
 
         assertAll(
                 () -> assertTrue(requestBuilder.hasRoute()),
@@ -156,6 +173,7 @@ public class CommandManagerTest {
     public void prepare_request_with_slot_id_routes(SlotType slotType) {
         CompletableFuture<Response> future = new CompletableFuture<>();
         when(channelHandler.write(any(), anyBoolean())).thenReturn(future);
+        when(channelHandler.isClosed()).thenReturn(false);
 
         ArgumentCaptor<RedisRequest.Builder> captor =
                 ArgumentCaptor.forClass(RedisRequest.Builder.class);
@@ -188,6 +206,7 @@ public class CommandManagerTest {
     public void prepare_request_with_slot_key_routes(SlotType slotType) {
         CompletableFuture<Response> future = new CompletableFuture<>();
         when(channelHandler.write(any(), anyBoolean())).thenReturn(future);
+        when(channelHandler.isClosed()).thenReturn(false);
 
         ArgumentCaptor<RedisRequest.Builder> captor =
                 ArgumentCaptor.forClass(RedisRequest.Builder.class);
@@ -216,15 +235,40 @@ public class CommandManagerTest {
     }
 
     @Test
+    public void prepare_request_with_by_address_route() {
+        CompletableFuture<Response> future = new CompletableFuture<>();
+        when(channelHandler.write(any(), anyBoolean())).thenReturn(future);
+        when(channelHandler.isClosed()).thenReturn(false);
+
+        ArgumentCaptor<RedisRequest.Builder> captor =
+                ArgumentCaptor.forClass(RedisRequest.Builder.class);
+
+        service.submitNewCommand(
+                CustomCommand, new String[0], new ByAddressRoute("testhost", 6379), r -> null);
+        verify(channelHandler).write(captor.capture(), anyBoolean());
+        var requestBuilder = captor.getValue();
+
+        assertAll(
+                () -> assertTrue(requestBuilder.hasRoute()),
+                () -> assertTrue(requestBuilder.getRoute().hasByAddressRoute()),
+                () -> assertEquals("testhost", requestBuilder.getRoute().getByAddressRoute().getHost()),
+                () -> assertEquals(6379, requestBuilder.getRoute().getByAddressRoute().getPort()),
+                () -> assertFalse(requestBuilder.getRoute().hasSimpleRoutes()),
+                () -> assertFalse(requestBuilder.getRoute().hasSlotIdRoute()),
+                () -> assertFalse(requestBuilder.getRoute().hasSlotKeyRoute()));
+    }
+
+    @Test
     public void prepare_request_with_unknown_route_type() {
         CompletableFuture<Response> future = new CompletableFuture<>();
         when(channelHandler.write(any(), anyBoolean())).thenReturn(future);
 
         var exception =
                 assertThrows(
-                        IllegalArgumentException.class,
-                        () -> service.submitNewCommand(CustomCommand, new String[0], () -> false, r -> null));
-        assertEquals("Unknown type of route", exception.getMessage());
+                        RequestException.class,
+                        () ->
+                                service.submitNewCommand(CustomCommand, new String[0], new Route() {}, r -> null));
+        assertTrue(exception.getMessage().startsWith("Unknown type of route"));
     }
 
     @SneakyThrows
@@ -239,12 +283,13 @@ public class CommandManagerTest {
 
         CompletableFuture<Response> future = new CompletableFuture<>();
         when(channelHandler.write(any(), anyBoolean())).thenReturn(future);
+        when(channelHandler.isClosed()).thenReturn(false);
 
         ArgumentCaptor<RedisRequest.Builder> captor =
                 ArgumentCaptor.forClass(RedisRequest.Builder.class);
 
         // exercise
-        service.submitNewCommand(trans, r -> null);
+        service.submitNewTransaction(trans, r -> null);
 
         // verify
         verify(channelHandler).write(captor.capture(), anyBoolean());
@@ -254,22 +299,22 @@ public class CommandManagerTest {
         assertTrue(requestBuilder.hasTransaction());
         assertEquals(3, requestBuilder.getTransaction().getCommandsCount());
 
-        LinkedList<String> resultPayloads = new LinkedList<>();
-        resultPayloads.add("one");
-        resultPayloads.add("two");
-        resultPayloads.add("three");
+        LinkedList<ByteString> resultPayloads = new LinkedList<>();
+        resultPayloads.add(ByteString.copyFromUtf8("one"));
+        resultPayloads.add(ByteString.copyFromUtf8("two"));
+        resultPayloads.add(ByteString.copyFromUtf8("three"));
         for (redis_request.RedisRequestOuterClass.Command command :
                 requestBuilder.getTransaction().getCommandsList()) {
             assertEquals(CustomCommand, command.getRequestType());
-            assertEquals("GETSTRING", command.getArgsArray().getArgs(0));
+            assertEquals(ByteString.copyFromUtf8("GETSTRING"), command.getArgsArray().getArgs(0));
             assertEquals(resultPayloads.pop(), command.getArgsArray().getArgs(1));
         }
     }
 
     @ParameterizedTest
-    @EnumSource(value = SimpleRoute.class)
+    @MethodSource("getEnumRoutes")
     public void submitNewCommand_with_ClusterTransaction_with_route_sends_protobuf_request(
-            SimpleRoute routeType) {
+            Route routeType) {
 
         String[] arg1 = new String[] {"GETSTRING", "one"};
         String[] arg2 = new String[] {"GETSTRING", "two"};
@@ -279,19 +324,20 @@ public class CommandManagerTest {
 
         CompletableFuture<Response> future = new CompletableFuture<>();
         when(channelHandler.write(any(), anyBoolean())).thenReturn(future);
+        when(channelHandler.isClosed()).thenReturn(false);
 
         ArgumentCaptor<RedisRequest.Builder> captor =
                 ArgumentCaptor.forClass(RedisRequest.Builder.class);
 
-        service.submitNewCommand(trans, Optional.of(routeType), r -> null);
+        service.submitNewTransaction(trans, Optional.of(routeType), r -> null);
         verify(channelHandler).write(captor.capture(), anyBoolean());
         var requestBuilder = captor.getValue();
 
         var protobufToClientRouteMapping =
                 Map.of(
-                        SimpleRoutes.AllNodes, SimpleRoute.ALL_NODES,
-                        SimpleRoutes.AllPrimaries, SimpleRoute.ALL_PRIMARIES,
-                        SimpleRoutes.Random, SimpleRoute.RANDOM);
+                        SimpleRoutes.AllNodes, ALL_NODES,
+                        SimpleRoutes.AllPrimaries, ALL_PRIMARIES,
+                        SimpleRoutes.Random, RANDOM);
 
         assertAll(
                 () -> assertTrue(requestBuilder.hasRoute()),

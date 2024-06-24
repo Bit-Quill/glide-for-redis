@@ -4,9 +4,15 @@ from __future__ import annotations
 
 from typing import Dict, List, Mapping, Optional, cast
 
-from glide.async_commands.core import CoreCommands, InfoSection
+from glide.async_commands.command_args import Limit, OrderBy
+from glide.async_commands.core import (
+    CoreCommands,
+    FlushMode,
+    InfoSection,
+    _build_sort_args,
+)
 from glide.async_commands.transaction import BaseTransaction, Transaction
-from glide.constants import TOK, TResult
+from glide.constants import OK, TOK, TResult
 from glide.protobuf.redis_request_pb2 import RequestType
 
 
@@ -14,7 +20,9 @@ class StandaloneCommands(CoreCommands):
     async def custom_command(self, command_args: List[str]) -> TResult:
         """
         Executes a single command, without checking inputs.
-            @remarks - This function should only be used for single-response commands. Commands that don't return response (such as SUBSCRIBE), or that return potentially more than a single response (such as XREAD), or that change the client's behavior (such as entering pub/sub mode on RESP2 connections) shouldn't be called using this function.
+        See the [Glide for Redis Wiki](https://github.com/aws/glide-for-redis/wiki/General-Concepts#custom-command)
+        for details on the restrictions and limitations of the custom command API.
+
             @example - Return a list of all pub/sub clients:
 
                 connection.customCommand(["CLIENT", "LIST","TYPE", "PUBSUB"])
@@ -191,4 +199,263 @@ class StandaloneCommands(CoreCommands):
         """
         return cast(
             Optional[str], await self._execute_command(RequestType.ClientGetName, [])
+        )
+
+    async def dbsize(self) -> int:
+        """
+        Returns the number of keys in the currently selected database.
+        See https://redis.io/commands/dbsize for more details.
+
+        Returns:
+            int: The number of keys in the currently selected database.
+
+        Examples:
+            >>> await client.dbsize()
+                10  # Indicates there are 10 keys in the current database.
+        """
+        return cast(int, await self._execute_command(RequestType.DBSize, []))
+
+    async def echo(self, message: str) -> str:
+        """
+        Echoes the provided `message` back.
+
+        See https://redis.io/commands/echo for more details.
+
+        Args:
+            message (str): The message to be echoed back.
+
+        Returns:
+            str: The provided `message`.
+
+        Examples:
+            >>> await client.echo("Glide-for-Redis")
+                'Glide-for-Redis'
+        """
+        return cast(str, await self._execute_command(RequestType.Echo, [message]))
+
+    async def time(self) -> List[str]:
+        """
+        Returns the server time.
+
+        See https://redis.io/commands/time/ for more details.
+
+        Returns:
+            List[str]:  The current server time as a two items `array`:
+            A Unix timestamp and the amount of microseconds already elapsed in the current second.
+            The returned `array` is in a [Unix timestamp, Microseconds already elapsed] format.
+
+        Examples:
+            >>> await client.time()
+            ['1710925775', '913580']
+        """
+        return cast(
+            List[str],
+            await self._execute_command(RequestType.Time, []),
+        )
+
+    async def lastsave(self) -> int:
+        """
+        Returns the Unix time of the last DB save timestamp or startup timestamp if no save was made since then.
+
+        See https://valkey.io/commands/lastsave for more details.
+
+        Returns:
+            int: The Unix time of the last successful DB save.
+
+        Examples:
+            >>> await client.lastsave()
+            1710925775  # Unix time of the last DB save
+        """
+        return cast(
+            int,
+            await self._execute_command(RequestType.LastSave, []),
+        )
+
+    async def move(self, key: str, db_index: int) -> bool:
+        """
+        Move `key` from the currently selected database to the database specified by `db_index`.
+
+        See https://valkey.io/commands/move/ for more details.
+
+        Args:
+            key (str): The key to move.
+            db_index (int): The index of the database to move `key` to.
+
+        Returns:
+            bool: True if `key` was moved, or False if the `key` already exists in the destination database
+                or does not exist in the source database.
+
+        Example:
+            >>> await client.move("some_key", 1)
+                True
+        """
+        return cast(
+            bool,
+            await self._execute_command(RequestType.Move, [key, str(db_index)]),
+        )
+
+    async def sort(
+        self,
+        key: str,
+        by_pattern: Optional[str] = None,
+        limit: Optional[Limit] = None,
+        get_patterns: Optional[List[str]] = None,
+        order: Optional[OrderBy] = None,
+        alpha: Optional[bool] = None,
+    ) -> List[Optional[str]]:
+        """
+        Sorts the elements in the list, set, or sorted set at `key` and returns the result.
+        The `sort` command can be used to sort elements based on different criteria and apply transformations on sorted elements.
+        To store the result into a new key, see `sort_store`.
+
+        See https://valkey.io/commands/sort for more details.
+
+        Args:
+            key (str): The key of the list, set, or sorted set to be sorted.
+            by_pattern (Optional[str]): A pattern to sort by external keys instead of by the elements stored at the key themselves.
+                The pattern should contain an asterisk (*) as a placeholder for the element values, where the value
+                from the key replaces the asterisk to create the key name. For example, if `key` contains IDs of objects,
+                `by_pattern` can be used to sort these IDs based on an attribute of the objects, like their weights or
+                timestamps.
+                E.g., if `by_pattern` is `weight_*`, the command will sort the elements by the values of the
+                keys `weight_<element>`.
+                If not provided, elements are sorted by their value.
+            limit (Optional[Limit]): Limiting the range of the query by setting offset and result count. See `Limit` class for more information.
+            get_pattern (Optional[str]): A pattern used to retrieve external keys' values, instead of the elements at `key`.
+                The pattern should contain an asterisk (*) as a placeholder for the element values, where the value
+                from `key` replaces the asterisk to create the key name. This allows the sorted elements to be
+                transformed based on the related keys values. For example, if `key` contains IDs of users, `get_pattern`
+                can be used to retrieve specific attributes of these users, such as their names or email addresses.
+                E.g., if `get_pattern` is `name_*`, the command will return the values of the keys `name_<element>`
+                for each sorted element. Multiple `get_pattern` arguments can be provided to retrieve multiple attributes.
+                The special value `#` can be used to include the actual element from `key` being sorted.
+                If not provided, only the sorted elements themselves are returned.
+            order (Optional[OrderBy]): Specifies the order to sort the elements.
+                Can be `OrderBy.ASC` (ascending) or `OrderBy.DESC` (descending).
+            alpha (Optional[bool]): When `True`, sorts elements lexicographically. When `False` (default), sorts elements numerically.
+                Use this when the list, set, or sorted set contains string values that cannot be converted into double precision floating point
+
+        Returns:
+            List[Optional[str]]: Returns a list of sorted elements.
+
+        Examples:
+            >>> await client.lpush("mylist", 3, 1, 2)
+            >>> await client.sort("mylist")
+            ['1', '2', '3']
+            >>> await client.sort("mylist", order=OrderBy.DESC)
+            ['3', '2', '1']
+            >>> await client.lpush("mylist2", 2, 1, 2, 3, 3, 1)
+            >>> await client.sort("mylist2", limit=Limit(2, 3))
+            ['2', '2', '3']
+            >>> await client.hset("user:1", "name", "Alice", "age", 30)
+            >>> await client.hset("user:2", "name", "Bob", "age", 25)
+            >>> await client.lpush("user_ids", 2, 1)
+            >>> await client.sort("user_ids", by_pattern="user:*->age", get_patterns=["user:*->name"])
+            ['Bob', 'Alice']
+        """
+        args = _build_sort_args(key, by_pattern, limit, get_patterns, order, alpha)
+        result = await self._execute_command(RequestType.Sort, args)
+        return cast(List[Optional[str]], result)
+
+    async def sort_store(
+        self,
+        key: str,
+        destination: str,
+        by_pattern: Optional[str] = None,
+        limit: Optional[Limit] = None,
+        get_patterns: Optional[List[str]] = None,
+        order: Optional[OrderBy] = None,
+        alpha: Optional[bool] = None,
+    ) -> int:
+        """
+        Sorts the elements in the list, set, or sorted set at `key` and stores the result in `store`.
+        The `sort` command can be used to sort elements based on different criteria, apply transformations on sorted elements, and store the result in a new key.
+        To get the sort result without storing it into a key, see `sort`.
+
+        See https://valkey.io/commands/sort for more details.
+
+        Args:
+            key (str): The key of the list, set, or sorted set to be sorted.
+            destination (str): The key where the sorted result will be stored.
+            by_pattern (Optional[str]): A pattern to sort by external keys instead of by the elements stored at the key themselves.
+                The pattern should contain an asterisk (*) as a placeholder for the element values, where the value
+                from the key replaces the asterisk to create the key name. For example, if `key` contains IDs of objects,
+                `by_pattern` can be used to sort these IDs based on an attribute of the objects, like their weights or
+                timestamps.
+                E.g., if `by_pattern` is `weight_*`, the command will sort the elements by the values of the
+                keys `weight_<element>`.
+                If not provided, elements are sorted by their value.
+            limit (Optional[Limit]): Limiting the range of the query by setting offset and result count. See `Limit` class for more information.
+            get_pattern (Optional[str]): A pattern used to retrieve external keys' values, instead of the elements at `key`.
+                The pattern should contain an asterisk (*) as a placeholder for the element values, where the value
+                from `key` replaces the asterisk to create the key name. This allows the sorted elements to be
+                transformed based on the related keys values. For example, if `key` contains IDs of users, `get_pattern`
+                can be used to retrieve specific attributes of these users, such as their names or email addresses.
+                E.g., if `get_pattern` is `name_*`, the command will return the values of the keys `name_<element>`
+                for each sorted element. Multiple `get_pattern` arguments can be provided to retrieve multiple attributes.
+                The special value `#` can be used to include the actual element from `key` being sorted.
+                If not provided, only the sorted elements themselves are returned.
+            order (Optional[OrderBy]): Specifies the order to sort the elements.
+                Can be `OrderBy.ASC` (ascending) or `OrderBy.DESC` (descending).
+            alpha (Optional[bool]): When `True`, sorts elements lexicographically. When `False` (default), sorts elements numerically.
+                Use this when the list, set, or sorted set contains string values that cannot be converted into double precision floating point
+
+        Returns:
+            int: The number of elements in the sorted key stored at `store`.
+
+        Examples:
+            >>> await client.lpush("mylist", 3, 1, 2)
+            >>> await client.sort_store("mylist", "sorted_list")
+            3  # Indicates that the sorted list "sorted_list" contains three elements.
+            >>> await client.lrange("sorted_list", 0, -1)
+            ['1', '2', '3']
+        """
+        args = _build_sort_args(
+            key, by_pattern, limit, get_patterns, order, alpha, store=destination
+        )
+        result = await self._execute_command(RequestType.Sort, args)
+        return cast(int, result)
+
+    async def publish(self, message: str, channel: str) -> TOK:
+        """
+        Publish message on pubsub channel.
+        See https://valkey.io/commands/publish for more details.
+
+        Args:
+            message (str): Message to publish
+            channel (str): Channel to publish the message on.
+
+        Returns:
+            TOK: a simple `OK` response.
+
+        Examples:
+            >>> await client.publish("Hi all!", "global-channel")
+                "OK"
+        """
+        await self._execute_command(RequestType.Publish, [channel, message])
+        return cast(TOK, OK)
+
+    async def flushall(self, flush_mode: Optional[FlushMode] = None) -> TOK:
+        """
+        Deletes all the keys of all the existing databases. This command never fails.
+
+        See https://valkey.io/commands/flushall for more details.
+
+        Args:
+            flush_mode (Optional[FlushMode]): The flushing mode, could be either `SYNC` or `ASYNC`.
+
+        Returns:
+            TOK: OK.
+
+        Examples:
+             >>> await client.flushall(FlushMode.ASYNC)
+                 OK  # This command never fails.
+        """
+        args = []
+        if flush_mode is not None:
+            args.append(flush_mode.value)
+
+        return cast(
+            TOK,
+            await self._execute_command(RequestType.FlushAll, args),
         )

@@ -5,23 +5,34 @@ on:
         branches: ["main"]
         paths:
             - csharp/**
-            - glide-core/**
+            - glide-core/src/**
             - submodules/**
             - .github/workflows/csharp.yml
+            - .github/workflows/install-shared-dependencies/action.yml
+            - .github/workflows/install-redis/action.yml
+            - .github/workflows/test-benchmark/action.yml
+            - .github/workflows/lint-rust/action.yml
     pull_request:
         paths:
             - csharp/**
             - glide-core/src/**
             - submodules/**
             - .github/workflows/csharp.yml
+            - .github/workflows/install-shared-dependencies/action.yml
+            - .github/workflows/install-redis/action.yml
+            - .github/workflows/test-benchmark/action.yml
+            - .github/workflows/lint-rust/action.yml
 
 permissions:
     contents: read
 
+concurrency:
+    group: C#-${{ github.head_ref || github.ref }}
+    cancel-in-progress: true
+
 jobs:
     run-tests:
-        timeout-minutes: 15
-        runs-on: ubuntu-latest
+        timeout-minutes: 25
         strategy:
             fail-fast: false
             matrix:
@@ -29,8 +40,21 @@ jobs:
                     - 6.2.14
                     - 7.2.3
                 dotnet:
-                    - 6.0
-                    - 8.0
+                    - '6.0'
+                    - '8.0'
+                host:
+                    - {
+                        OS: ubuntu,
+                        RUNNER: ubuntu-latest,
+                        TARGET: x86_64-unknown-linux-gnu
+                    }
+                    - {
+                        OS: macos,
+                        RUNNER: macos-latest,
+                        TARGET: aarch64-apple-darwin
+                    }
+    
+        runs-on: ${{ matrix.host.RUNNER }}
 
         steps:
             - uses: actions/checkout@v4
@@ -38,22 +62,23 @@ jobs:
                   submodules: recursive
 
             - name: Install redis
+              # TODO: make this step macos compatible: https://github.com/aws/glide-for-redis/issues/781
+              if: ${{ matrix.host.OS == 'ubuntu' }}
               uses: ./.github/workflows/install-redis
               with:
                   redis-version: ${{ matrix.redis }}
 
-            - name: Install protoc (protobuf)
-              uses: arduino/setup-protoc@v3
-              with:
-                  version: "25.1"
-
             - name: Set up dotnet ${{ matrix.dotnet }}
-              uses: actions/setup-dotnet@v3
+              uses: actions/setup-dotnet@v4
               with:
                   dotnet-version: ${{ matrix.dotnet }}
-
-            - name: Start redis server
-              run: redis-server &
+    
+            - name: Install shared software dependencies
+              uses: ./.github/workflows/install-shared-dependencies
+              with:
+                  os: ${{ matrix.host.OS }}
+                  target: ${{ matrix.host.TARGET }}
+                  github-token: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Format
               working-directory: ./csharp
@@ -61,11 +86,24 @@ jobs:
 
             - name: Test dotnet ${{ matrix.dotnet }}
               working-directory: ./csharp
-              run: dotnet test --framework net${{ matrix.dotnet }} /warnaserror
+              run: dotnet test --framework net${{ matrix.dotnet }} "-l:html;LogFileName=TestReport.html" --results-directory . -warnaserror
 
             - uses: ./.github/workflows/test-benchmark
               with:
-                  language-flag: -csharp
+                  language-flag: -csharp -dotnet-framework net${{ matrix.dotnet }}
+
+            - name: Upload test reports
+              if: always()
+              continue-on-error: true
+              uses: actions/upload-artifact@v4
+              with:
+                  name: test-reports-dotnet-${{ matrix.dotnet }}-redis-${{ matrix.redis }}-${{ matrix.host.RUNNER }}
+                  path: |
+                      csharp/TestReport.html
+                      benchmarks/results/*
+                      utils/clusters/**
+
+# TODO Add amazonlinux
 
     lint-rust:
         timeout-minutes: 10

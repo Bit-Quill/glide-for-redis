@@ -3,6 +3,7 @@
 from enum import Enum
 from typing import Optional
 
+from glide.exceptions import RequestError
 from glide.protobuf.redis_request_pb2 import RedisRequest, SimpleRoutes
 from glide.protobuf.redis_request_pb2 import SlotTypes as ProtoSlotTypes
 
@@ -23,6 +24,12 @@ class Route:
 
 
 class AllNodes(Route):
+    """
+    Route request to all nodes.
+    Warning:
+        Don't use it with write commands, they could be routed to a replica (RO) node and fail.
+    """
+
     pass
 
 
@@ -31,6 +38,12 @@ class AllPrimaries(Route):
 
 
 class RandomNode(Route):
+    """
+    Route request to a random node.
+    Warning:
+        Don't use it with write commands, because they could be randomly routed to a replica (RO) node and fail.
+    """
+
     pass
 
 
@@ -46,6 +59,29 @@ class SlotIdRoute(Route):
         super().__init__()
         self.slot_type = slot_type
         self.slot_id = slot_id
+
+
+class ByAddressRoute(Route):
+    def __init__(self, host: str, port: Optional[int] = None) -> None:
+        """Routes a request to a node by its address
+
+        Args:
+            host (str): The endpoint of the node. If `port` is not provided, should be in the f"{address}:{port}" format, where `address` is the preferred endpoint as shown in the output of the `CLUSTER SLOTS` command.
+            port (Optional[int]): The port to access on the node. If port is not provided, `host` is assumed to be in the format f"{address}:{port}".
+        """
+        super().__init__()
+        if port is None:
+            split = host.split(":")
+            if len(split) < 2:
+                raise RequestError(
+                    "No port provided, expected host to be formatted as {hostname}:{port}`. Received "
+                    + host
+                )
+            self.host = split[0]
+            self.port = int(split[1])
+        else:
+            self.host = host
+            self.port = port
 
 
 def to_protobuf_slot_type(slot_type: SlotType) -> ProtoSlotTypes.ValueType:
@@ -71,5 +107,8 @@ def set_protobuf_route(request: RedisRequest, route: Optional[Route]) -> None:
     elif isinstance(route, SlotIdRoute):
         request.route.slot_id_route.slot_type = to_protobuf_slot_type(route.slot_type)
         request.route.slot_id_route.slot_id = route.slot_id
+    elif isinstance(route, ByAddressRoute):
+        request.route.by_address_route.host = route.host
+        request.route.by_address_route.port = route.port
     else:
-        raise Exception(f"Received invalid route type: {type(route)}")
+        raise RequestError(f"Received invalid route type: {type(route)}")

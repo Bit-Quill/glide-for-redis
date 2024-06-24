@@ -24,6 +24,9 @@ on:
             - .github/workflows/install-shared-dependencies/action.yml
             - .github/workflows/install-redis-modules/action.yml
 
+concurrency:
+    group: python-${{ github.head_ref || github.ref }}
+    cancel-in-progress: true
 
 permissions:
     contents: read
@@ -81,7 +84,7 @@ jobs:
             - name: Build Python wrapper
               uses: ./.github/workflows/build-python-wrapper
               with:
-                  os: "ubuntu-latest"
+                  os: "ubuntu"
                   target: "x86_64-unknown-linux-gnu"
                   github-token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -96,17 +99,12 @@ jobs:
                   pip install -r ../benchmarks/python/requirements.txt
                   python -m mypy ..
 
-            - name: Install Redis Modules
-              uses: ./.github/workflows/install-redis-modules
-              with:
-                  redis-version: ${{ matrix.redis }} 
-
             - name: Test with pytest
               working-directory: ./python
               run: |
                   source .env/bin/activate
                   cd python/tests/
-                  pytest --asyncio-mode=auto --override-ini=addopts= --load-module=$GITHUB_WORKSPACE/redisearch.so --load-module=$GITHUB_WORKSPACE/redisjson.so
+                  pytest --asyncio-mode=auto
 
             - uses: ./.github/workflows/test-benchmark
               with:
@@ -127,7 +125,7 @@ jobs:
 
     build-macos-latest:
         runs-on: macos-latest
-        timeout-minutes: 15
+        timeout-minutes: 25
         steps:
             - uses: actions/checkout@v4
               with:
@@ -138,8 +136,8 @@ jobs:
             - name: Build Python wrapper
               uses: ./.github/workflows/build-python-wrapper
               with:
-                  os: "macos-latest"
-                  target: "x86_64-apple-darwin"
+                  os: "macos"
+                  target: "aarch64-apple-darwin"
                   github-token: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Test compatibility with pytest

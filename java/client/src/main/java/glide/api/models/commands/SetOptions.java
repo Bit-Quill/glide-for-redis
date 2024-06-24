@@ -7,7 +7,8 @@ import static glide.api.models.commands.SetOptions.ExpiryType.SECONDS;
 import static glide.api.models.commands.SetOptions.ExpiryType.UNIX_MILLISECONDS;
 import static glide.api.models.commands.SetOptions.ExpiryType.UNIX_SECONDS;
 
-import glide.api.commands.StringCommands;
+import glide.api.commands.StringBaseCommands;
+import glide.api.models.GlideString;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.Builder;
@@ -16,7 +17,7 @@ import lombok.RequiredArgsConstructor;
 import redis_request.RedisRequestOuterClass.Command;
 
 /**
- * Optional arguments for {@link StringCommands#set(String, String, SetOptions)} command.
+ * Optional arguments for {@link StringBaseCommands#set(String, String, SetOptions)} command.
  *
  * @see <a href="https://redis.io/commands/set/">redis.io</a>
  */
@@ -43,12 +44,12 @@ public final class SetOptions {
     @RequiredArgsConstructor
     @Getter
     public enum ConditionalSet {
+        /** Only set the key if it already exists. Equivalent to <code>XX</code> in the Redis API. */
+        ONLY_IF_EXISTS("XX"),
         /**
-         * Only set the key if it does not already exist. Equivalent to <code>XX</code> in the Redis
+         * Only set the key if it does not already exist. Equivalent to <code>NX</code> in the Redis
          * API.
          */
-        ONLY_IF_EXISTS("XX"),
-        /** Only set the key if it already exists. Equivalent to <code>NX</code> in the Redis API. */
         ONLY_IF_DOES_NOT_EXIST("NX");
 
         private final String redisApi;
@@ -108,7 +109,7 @@ public final class SetOptions {
          * Set the specified Unix time at which the key will expire, in seconds. Equivalent to <code>
          * EXAT</code> in the Redis API.
          *
-         * @param unixSeconds unix time to expire, in seconds
+         * @param unixSeconds <code>UNIX TIME</code> to expire, in seconds.
          * @return Expiry
          */
         public static Expiry UnixSeconds(Long unixSeconds) {
@@ -119,7 +120,7 @@ public final class SetOptions {
          * Set the specified Unix time at which the key will expire, in milliseconds. Equivalent to
          * <code>PXAT</code> in the Redis API.
          *
-         * @param unixMilliseconds unix time to expire, in milliseconds
+         * @param unixMilliseconds <code>UNIX TIME</code> to expire, in milliseconds.
          * @return Expiry
          */
         public static Expiry UnixMilliseconds(Long unixMilliseconds) {
@@ -167,5 +168,32 @@ public final class SetOptions {
         }
 
         return optionArgs.toArray(new String[0]);
+    }
+
+    /**
+     * Converts SetOptions into a GlideString[] to add to a {@link Command} arguments.
+     *
+     * @return GlideString[]
+     */
+    public GlideString[] toGlideStringArgs() {
+        List<GlideString> optionArgs = new ArrayList<>();
+        if (conditionalSet != null) {
+            optionArgs.add(GlideString.of(conditionalSet.redisApi));
+        }
+
+        if (returnOldValue) {
+            optionArgs.add(GlideString.of(RETURN_OLD_VALUE));
+        }
+
+        if (expiry != null) {
+            optionArgs.add(GlideString.of(expiry.type.redisApi));
+            if (expiry.type != KEEP_EXISTING) {
+                assert expiry.count != null
+                        : "Set command received expiry type " + expiry.type + ", but count was not set.";
+                optionArgs.add(GlideString.of(expiry.count.toString()));
+            }
+        }
+
+        return optionArgs.toArray(new GlideString[0]);
     }
 }

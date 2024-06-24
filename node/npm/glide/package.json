@@ -1,10 +1,11 @@
 {
-    "type": "module",
     "name": "${scope}${pkg_name}",
+    "types": "build-ts/index.d.ts",
     "version": "${package_version}",
     "description": "An AWS-sponsored, open-source Redis client.",
     "main": "build-ts/index.js",
-    "types": "build-ts/index.d.ts",
+    "module": "build-ts/index.js",
+    "type": "commonjs",
     "scripts": {
         "lint": "eslint .",
         "lint:fix": "eslint . --fix",
@@ -42,7 +43,9 @@
         "${scope}glide-for-redis-darwin-arm64": "${package_version}",
         "${scope}glide-for-redis-darwin-x64": "${package_version}",
         "${scope}glide-for-redis-linux-arm64": "${package_version}",
-        "${scope}glide-for-redis-linux-x64": "${package_version}"
+        "${scope}glide-for-redis-linux-x64": "${package_version}",
+        "${scope}glide-for-redis-linux-musl-arm64": "${package_version}",
+        "${scope}glide-for-redis-linux-musl-x64": "${package_version}"
     },
     "eslintConfig": {
         "extends": [
@@ -57,5 +60,8 @@
             "build-ts/*"
         ],
         "root": true
+    },
+    "dependencies": {
+        "detect-libc": "^2.0.3"
     }
 }

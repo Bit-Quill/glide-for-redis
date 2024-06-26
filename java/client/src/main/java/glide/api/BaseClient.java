@@ -130,6 +130,7 @@ import static redis_request.RedisRequestOuterClass.RequestType.Unlink;
 import static redis_request.RedisRequestOuterClass.RequestType.Watch;
 import static redis_request.RedisRequestOuterClass.RequestType.XAck;
 import static redis_request.RedisRequestOuterClass.RequestType.XAdd;
+import static redis_request.RedisRequestOuterClass.RequestType.XAutoClaim;
 import static redis_request.RedisRequestOuterClass.RequestType.XDel;
 import static redis_request.RedisRequestOuterClass.RequestType.XGroupCreate;
 import static redis_request.RedisRequestOuterClass.RequestType.XGroupCreateConsumer;
@@ -1756,6 +1757,35 @@ public abstract class BaseClient
             @NonNull String key, @NonNull String group, @NonNull String[] ids) {
         String[] args = concatenateArrays(new String[] {key, group}, ids);
         return commandManager.submitNewCommand(XAck, args, this::handleLongResponse);
+    }
+
+    @Override
+    public CompletableFuture<Map<String, String[]>> xautoclaim(
+        String key, String group, String consumer, long minIdleTime, String start) {
+        String[] args = {key, group, consumer, Long.toString(minIdleTime), start};
+        return commandManager.submitNewCommand(XAutoClaim, args, this::handleMapResponse);
+    }
+
+    @Override
+    public CompletableFuture<Map<String, String[]>> xautoclaim(
+        String key, String group, String consumer, long minIdleTime, String start, long count) {
+        String[] args = {key, group, consumer, Long.toString(minIdleTime), start, Long.toString(count)};
+        return commandManager.submitNewCommand(XAutoClaim, args, this::handleMapResponse);
+    }
+
+    @Override
+    public CompletableFuture<String[]> xautoclaimJustId(
+        String key, String group, String consumer, long minIdleTime, String start) {
+        String[] args = {key, group, consumer, Long.toString(minIdleTime), start, JUST_ID_REDIS_API};
+        return commandManager.submitNewCommand(XAutoClaim, args,
+            response -> castArray(handleArrayResponse(response), String.class));
+    }
+
+    @Override
+    public CompletableFuture<String[]> xautoclaimJustId(
+        String key, String group, String consumer, long minIdleTime, String start, long count) {
+        String[] args = {key, group, consumer, Long.toString(minIdleTime), start, Long.toString(count), JUST_ID_REDIS_API};
+        return commandManager.submitNewCommand(XAutoClaim, args, response -> castArray(handleArrayResponse(response), String.class));
     }
 
     @Override

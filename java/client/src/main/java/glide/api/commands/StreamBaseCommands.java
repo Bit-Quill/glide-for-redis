@@ -545,4 +545,113 @@ public interface StreamBaseCommands {
      * </pre>
      */
     CompletableFuture<Long> xack(String key, String group, String[] ids);
+
+    /**
+     * Changes the ownership of pending stream entries that match the specified criteria.
+     *
+     * @see <a href="https://valkey.io/commands/xclaim/">valkey.io</a> for details.
+     * @param key The key of the stream.
+     * @param group The consumer group name.
+     * @param consumer The group consumer.
+     * @param minIdleTime The minimum idle time for the message to be claimed.
+     * @param start Message ID filter to start the scan of pending messages. The <code>start</code> ID
+     *     is returned by <code>xautoclaim</code> and intended for cursor-like experience. The special
+     *     ID of <code>"0-0"</code> is returned when there are no more pending messages.
+     * @return An <code>array</code> of message entries with the format <code>
+     *     [start, [[id, ["entry", "data"]], ...], [[id, ["entry", "data"]], ...]</code> that are
+     *     claimed by the consumer.
+     *     <ul>
+     *       <li>First entry is the start ID to be passed to subsequent <code>xautoclaim</code> calls.
+     *       <li>An <code>String[][][]</code> of message ID to entry lists for all claimed pending
+     *           messages.
+     *       <li>An <code>String[][][]</code> of message ID to trimmed messages. This feature was
+     *           introduced in Redis 7.0.
+     *     </ul>
+     *
+     * @example
+     */
+    CompletableFuture<Map<String, String[]>> xautoclaim(
+            String key, String group, String consumer, long minIdleTime, String start);
+
+    /**
+     * Changes the ownership of pending stream entries that match the specified criteria.
+     *
+     * @see <a href="https://valkey.io/commands/xclaim/">valkey.io</a> for details.
+     * @param key The key of the stream.
+     * @param group The consumer group name.
+     * @param consumer The group consumer.
+     * @param minIdleTime The minimum idle time for the message to be claimed.
+     * @param start Message ID filter to start the scan of pending messages. The <code>start</code> ID
+     *     is returned by <code>xautoclaim</code> and intended for cursor-like experience. The special
+     *     ID of <code>"0-0"</code> is returned when there are no more pending messages.
+     * @param count The upper limit of the number of entries that the command attempts to claim.
+     * @return An <code>array</code> of message entries with the format <code>
+     *     [start, [[id, ["entry", "data"]], ...], [[id, ["entry", "data"]], ...]</code> that are
+     *     claimed by the consumer.
+     *     <ul>
+     *       <li>First entry is the start ID to be passed to subsequent <code>xautoclaim</code> calls.
+     *       <li>An <code>String[][][]</code> of message ID to entry lists for all claimed pending
+     *           messages.
+     *       <li>An <code>String[][][]</code> of message ID to trimmed messages. This feature was
+     *           introduced in Redis 7.0.
+     *     </ul>
+     *
+     * @example
+     */
+    CompletableFuture<Map<String, String[]>> xautoclaim(
+            String key, String group, String consumer, long minIdleTime, String start, long count);
+
+    /**
+     * Changes the ownership of pending stream entries that match the specified criteria. This command
+     * uses the JUSTID optional argument to return a list of stream message ids.
+     *
+     * @see <a href="https://valkey.io/commands/xautoclaim/">valkey.io</a> for details.
+     * @param key The key of the stream.
+     * @param group The consumer group name.
+     * @param consumer The group consumer.
+     * @param minIdleTime The minimum idle time for the message to be claimed.
+     * @param start Message ID filter to start the scan of pending messages. The <code>start</code> ID
+     *     is returned by <code>xautoclaim</code> and intended for cursor-like experience. The special
+     *     ID of <code>"0-0"</code> is returned when there are no more pending messages.
+     * @return An <code>array</code> of message entries with the format <code>
+     *     [start, [id, ...], [id, ...]</code> that are claimed by the consumer.
+     *     <ul>
+     *       <li>First entry is the start ID to be passed to subsequent <code>xautoclaim</code> calls.
+     *       <li>An <code>String[]</code> of message IDs for all claimed pending messages.
+     *       <li>An <code>String[]</code> of message IDs for trimmed messages. This feature was
+     *           introduced in Redis 7.0.
+     *     </ul>
+     *
+     * @example
+     */
+    CompletableFuture<String[]> xautoclaimJustId(
+            String key, String group, String consumer, long minIdleTime, String start);
+
+    /**
+     * Changes the ownership of pending stream entries that match the specified criteria. This command
+     * uses the JUSTID optional argument to return a list of stream message ids.
+     *
+     * @see <a href="https://valkey.io/commands/xautoclaim/">valkey.io</a> for details.
+     * @param key The key of the stream.
+     * @param group The consumer group name.
+     * @param consumer The group consumer.
+     * @param minIdleTime The minimum idle time for the message to be claimed.
+     * @param start Message ID filter to start the scan of pending messages. The <code>start</code> ID
+     *     is returned by <code>xautoclaim</code> and intended for cursor-like experience. The special
+     *     ID of <code>"0-0"</code> is returned when there are no more pending messages.
+     * @param count The upper limit of the number of entries that the command attempts to claim.
+     * @return An <code>array</code> of message entries with the format <code>
+     *     [start, [id, ...], [id, ...]</code> that are claimed by the consumer.
+     *     <ul>
+     *       <li>First entry is the start ID to be passed to subsequent <code>xautoclaim</code> calls.
+     *       <li>An <code>String[]</code> of message IDs for all claimed pending messages.
+     *       <li>An <code>String[]</code> of message IDs for trimmed messages. This feature was
+     *           introduced in Redis 7.0.
+     *     </ul>
+     *
+     * @example
+     */
+    CompletableFuture<String[]> xautoclaimJustId(
+            String key, String group, String consumer, long minIdleTime, String start, long count);
+    ;
 }

@@ -63,3 +63,34 @@ class ListDirection(Enum):
     """
     RIGHT: Represents the option that elements should be popped from or added to the right side of a list.
     """
+
+
+class ObjectType(Enum):
+    """
+    Enumeration representing the type of ValKey object.
+    """
+
+    STRING = "String"
+    """
+    Represents a string object in Redis.
+    """
+
+    LIST = "List"
+    """
+    Represents a list object in Redis.
+    """
+
+    SET = "Set"
+    """
+    Represents a set object in Redis.
+    """
+
+    ZSET = "ZSet"
+    """
+    Represents a sorted set object in Redis.
+    """
+
+    HASH = "Hash"
+    """
+    Represents a hash object in Redis.    
+    """

@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type, Union, cast
 
 import async_timeout
 from glide.async_commands.cluster_commands import ClusterCommands
+from glide.async_commands.command_args import ObjectType
 from glide.async_commands.core import CoreCommands
 from glide.async_commands.standalone_commands import StandaloneCommands
 from glide.config import BaseClientConfiguration
@@ -31,6 +32,7 @@ from typing_extensions import Self
 from .glide import (
     DEFAULT_TIMEOUT_IN_MILLISECONDS,
     MAX_REQUEST_ARGS_LEN,
+    ClusterScanCursor,
     create_leaked_bytes_vec,
     start_socket_listener_external,
     value_from_pointer,
@@ -515,6 +517,31 @@ class GlideClusterClient(BaseClient, ClusterCommands):
     For full documentation, see
     https://github.com/aws/babushka/wiki/Python-wrapper#redis-cluster
     """
+
+    async def _cluster_scan(
+        self,
+        cursor: ClusterScanCursor,
+        match: Optional[str] = None,
+        count: Optional[int] = None,
+        type: Optional[ObjectType] = None,
+    ) -> List[Union[str, List[str]]]:
+        if self._is_closed:
+            raise ClosingError(
+                "Unable to execute requests; the client is closed. Please create a new client."
+            )
+        request = RedisRequest()
+        request.callback_idx = self._get_callback_index()
+        # Take out the hash string from the wrapping object
+        cursor_str = cursor.get_cursor()
+        if cursor_str is not None:
+            request.cluster_scan.cursor = cursor_str
+        if match is not None:
+            request.cluster_scan.match_pattern = match
+        if count is not None:
+            request.cluster_scan.count = count
+        if type is not None:
+            request.cluster_scan.object_type = type.value
+        return await self._write_request_await_response(request)
 
     def _get_protobuf_conn_request(self) -> ConnectionRequest:
         return self.config._create_a_protobuf_conn_request(cluster_mode=True)

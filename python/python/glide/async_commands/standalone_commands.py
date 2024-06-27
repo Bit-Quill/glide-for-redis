@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Mapping, Optional, cast
+from typing import Dict, List, Mapping, Optional, Union, cast
 
-from glide.async_commands.command_args import Limit, OrderBy
+from glide.async_commands.command_args import Limit, ObjectType, OrderBy
 from glide.async_commands.core import (
     CoreCommands,
     FlushMode,
@@ -665,3 +665,72 @@ class StandaloneCommands(CoreCommands):
             Optional[str],
             await self._execute_command(RequestType.RandomKey, []),
         )
+    
+    async def scan(
+        self,
+        cursor: int,
+        match: Optional[str] = None,
+        count: Optional[int] = None,
+        type: Optional[ObjectType] = None,
+    ) -> List[Union[int, List[str]]]:
+        """
+        Incrementally iterate over a collection of keys.
+        SCAN is a cursor based iterator. This means that at every call of the command,
+        the server returns an updated cursor that the user needs to use as the cursor argument in the next call.
+        An iteration starts when the cursor is set to 0, and terminates when the cursor returned by the server is 0.
+
+        The SCAN command, and the other commands in the SCAN family,
+        are able to provide to the user a set of guarantees associated to full iterations.
+
+        A full iteration always retrieves all the elements that were present
+        in the collection from the start to the end of a full iteration.
+        A full iteration never returns any element that was NOT present in the collection
+        from the start to the end of a full iteration.
+        However because SCAN has very little state associated (just the cursor) it has the following drawbacks:
+        A given element may be returned multiple times.
+        Elements that were not constantly present in the collection during a full iteration, may be returned or not/
+
+        See https://valkey.io/commands/scan for more details.
+
+        Args:
+            cursor (int): The cursor used for the iteration. In the first iteration, the cursor should be set to 0.
+                If the cursor sent to the server is not 0 or is not a valid cursor,
+                the result are undefined.
+            match (Optional[str]): A pattern to match keys against,
+                for example, "key*" will return all keys starting with "key".
+            count (Optional[int]): The number of keys to return per iteration.
+                The number of keys returned per iteration is not guaranteed to be the same as the count argument.
+                the argument is used as a hint for the server to know how many "steps" it can use to retrieve the keys.
+                The default value is 10.
+            type (ObjectType): The type of object to scan for: STRING, LIST, SET, HASH, ZSET.
+
+        Returns:
+            List[int, List[str]]: A tuple containing the next cursor value and a list of keys.
+
+        Examples:
+            >>> result = await client.scan(0)
+                print(result) #[17, ['key1', 'key2', 'key3', 'key4', 'key5', 'set1', 'set2', 'set3']]
+                result = await client.scan(17)
+                print(result) #[349, ['key4', 'key5', 'set1', 'hash1', 'zset1', 'list1', 'list2',
+                                        'list3', 'zset2', 'zset3', 'zset4', 'zset5', 'zset6']]
+                result = await client.scan(349)
+                print(result) #[0, ['key6', 'key7']]
+
+            >>> result = await client.scan(17, match="key*", count=2)
+                print(result) #[6, ['key4', 'key5']]
+
+            >>> result = await client.scan(0, type=ObjectType.Set)
+                print(result) #[362, ['set1', 'set2', 'set3']]
+        """
+        args = [str(cursor)]
+        if match:
+            args.extend(["MATCH", match])
+        if count:
+            args.extend(["COUNT", str(count)])
+        if type:
+            args.extend(["TYPE", type.value])
+        response = await self._execute_command(RequestType.Scan, args)
+        casted_response = cast(List[Union[int, List[str]]], response)
+        str_cursor = cast(str, casted_response[0])
+        keys = cast(List[str], casted_response[1])
+        return [int(str_cursor), keys]

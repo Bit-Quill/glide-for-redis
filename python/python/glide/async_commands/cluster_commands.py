@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Mapping, Optional, cast
+from typing import Dict, List, Mapping, Optional, Union, cast
 
-from glide.async_commands.command_args import Limit, OrderBy
+from glide.async_commands.command_args import Limit, ObjectType, OrderBy
 from glide.async_commands.core import (
     CoreCommands,
     FlushMode,
@@ -15,6 +15,8 @@ from glide.async_commands.transaction import BaseTransaction, ClusterTransaction
 from glide.constants import TOK, TClusterResponse, TResult, TSingleNodeRoute
 from glide.protobuf.redis_request_pb2 import RequestType
 from glide.routes import Route
+
+from ..glide import ClusterScanCursor
 
 
 class ClusterCommands(CoreCommands):
@@ -742,3 +744,86 @@ class ClusterCommands(CoreCommands):
             Optional[str],
             await self._execute_command(RequestType.RandomKey, [], route),
         )
+    
+    async def scan(
+        self,
+        cursor: ClusterScanCursor,
+        match: Optional[str] = None,
+        count: Optional[int] = None,
+        type: Optional[ObjectType] = None,
+    ) -> List[Union[ClusterScanCursor, List[str]]]:
+        """
+        Incrementally iterates over the keys in the Redis Cluster.
+        The method returns a list containing the next cursor and a list of keys.
+
+        This command is similar to the SCAN command, but it is designed to work in a Redis Cluster environment.
+        It do so by iterating over the keys in the cluster, one node at a time, while maintaining a consistent view of
+        the slots that are being scanned.
+        The view is maintaining by saving the slots that have been scanned in the scanState, while returning a ref to the
+        the state in the cursor object.
+        After every node that been scanned the method check for changes as failover or resharding and get a validated
+        result of the slots that been covered in the scan and checking for the next node own the next slots to scan.
+        Every cursor is a new state object, which mean that using the same cursor object will result the scan to handle
+        the same scan iteration again.
+        For each iteration the new cursor object should be used to continue the scan.
+
+        As the SCAN command, the method can be used to iterate over the keys in the database, the guarantee of the scan is
+        to return all keys the database have from the time the scan started that stay in the database till the scan ends.
+        The same key can be returned in multiple scans iteration.
+
+        See https://valkey.io/commands/scan/ for more details.
+
+        Args:
+            cursor (ClusterScanCursor): The cursor object wrapping the scan state - when starting a new scan
+            creation of new empty ClusterScanCursor is needed `ClusterScanCursor()`.
+            match (Optional[str]): A pattern to match keys against.
+            count (Optional[int]): The number of keys to return in a single iteration - the amount returned can vary and
+            not obligated to return exactly count.
+            This param is just a hint to the server of how much steps to do in each iteration.
+            type (Optional[ObjectType]): The type of object to scan for (STRING, LIST, SET, ZSET, HASH).
+
+        Returns:
+            List[str, List[str]]: A list containing the next cursor and a list of keys.
+
+        Examples:
+            >>> In the following example, we will iterate over the keys in the cluster.
+                client.set("key1", "value1")
+                client.set("key2", "value2")
+                client.set("key3", "value3")
+                let cursor = ClusterScanCursor()
+                all_keys = []
+                while not cursor.is_finished():
+                    cursor, keys = await client.scan(cursor, count=10)
+                    all_keys.extend(keys)
+                print(all_keys) # ['key1', 'key2', 'key3']
+            >>> In the following example, we will iterate over the keys in the cluster that match the pattern "my_key*".
+                client.set("my_key1", "value1")
+                client.set("my_key2", "value2")
+                client.set("not_my_key", "value3")
+                client.set("something_else", "value4")
+                let cursor = ClusterScanCursor()
+                all_keys = []
+                while not cursor.is_finished():
+                    cursor, keys = await client.cluster_scan(cursor, match="my_key*", count=10)
+                    all_keys.extend(keys)
+                print(all_keys) # ['my_key1', 'my_key2', 'not_my_key']
+            >>> In the following example, we will iterate over the keys in the cluster that are of type STRING.
+                client.set("str_key1", "value1")
+                client.set("str_key2", "value2")
+                client.set("str_key3", "value3")
+                client.sadd("it_is_a_set", "value4")
+                let cursor = ClusterScanCursor()
+                all_keys = []
+                while not cursor.is_finished():
+                    cursor, keys = await client.cluster_scan(cursor, type=ObjectType.STRING)
+                    all_keys.extend(keys)
+                print(all_keys) # ['str_key1', 'str_key2', 'str_key3']
+        """
+        response = await self._cluster_scan(cursor, match, count, type)
+        casted_response = cast(
+            List[Union[str, List[str]]],
+            response,
+        )
+        cursor_str = cast(str, casted_response[0])
+        cursor = ClusterScanCursor(cursor_str)
+        return cast(List[Union[ClusterScanCursor, List[str]]], [cursor, casted_response[1]])

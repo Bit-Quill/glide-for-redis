@@ -3,10 +3,12 @@
  */
 use super::rotating_buffer::RotatingBuffer;
 use crate::client::Client;
+use crate::cluster_scan_container::get_cluster_scan_cursor;
 use crate::connection_request::ConnectionRequest;
 use crate::errors::{error_message, error_type, RequestErrorType};
 use crate::redis_request::{
-    command, redis_request, Command, RedisRequest, Routes, ScriptInvocation, SlotTypes, Transaction,
+    command, redis_request, ClusterScan, Command, RedisRequest, Routes, ScriptInvocation,
+    SlotTypes, Transaction,
 };
 use crate::response;
 use crate::response::Response;
@@ -20,8 +22,7 @@ use redis::cluster_routing::{
     MultipleNodeRoutingInfo, Route, RoutingInfo, SingleNodeRoutingInfo, SlotAddr,
 };
 use redis::cluster_routing::{ResponsePolicy, Routable};
-use redis::RedisError;
-use redis::{Cmd, PushInfo, Value};
+use redis::{Cmd, PushInfo, RedisError, ScanStateRC, Value};
 use std::cell::Cell;
 use std::rc::Rc;
 use std::{env, str};
@@ -311,6 +312,55 @@ async fn send_command(
         .map_err(|err| err.into())
 }
 
+async fn cluster_scan(cluster_scan: ClusterScan, mut client: Client) -> ClientUsageResult<Value> {
+    // Since we don't send the cluster scan as a usual command, but throw a special function in redis-rs library,
+    // we need to handle the command separately.
+    // Especially, we need to handle the cursor, which is not the cursor of the ValKey command, but the a hash of the ref
+    // to the ScanState in redis-rs stored in the cluster scan container.
+    // We need to get the ref from the table or create a new one if the cursor is empty.
+    let cursor = cluster_scan.cursor.into();
+    let cluster_scan_cursor = if cursor == String::new() {
+        ScanStateRC::new()
+    } else {
+        get_cluster_scan_cursor(cursor)?
+    };
+
+    let match_pattern_string: String;
+    let match_pattern = match cluster_scan.match_pattern {
+        Some(pattern) => {
+            match_pattern_string = pattern.to_string();
+            Some(match_pattern_string.as_str())
+        }
+        None => None,
+    };
+    let count = match cluster_scan.count {
+        Some(count) => Some(count as usize),
+        None => None,
+    };
+    let object_type = match &cluster_scan.object_type {
+        Some(object_type) => {
+            let string_object_type = object_type.to_string();
+            match string_object_type.as_str() {
+                "String" => Some(redis::ObjectType::String),
+                "List" => Some(redis::ObjectType::List),
+                "Set" => Some(redis::ObjectType::Set),
+                "ZSet" => Some(redis::ObjectType::ZSet),
+                "Hash" => Some(redis::ObjectType::Hash),
+                _ => None,
+            }
+        }
+        None => None,
+    };
+
+    let result = client
+        .cluster_scan(&cluster_scan_cursor, &match_pattern, count, object_type)
+        .await;
+    match result {
+        Ok(result) => Ok(result.into()),
+        Err(err) => Err(err.into()),
+    }
+}
+
 async fn invoke_script(
     script: ScriptInvocation,
     mut client: Client,
@@ -415,6 +465,10 @@ fn handle_request(request: RedisRequest, client: Client, writer: Rc<Writer>) {
     task::spawn_local(async move {
         let result = match request.command {
             Some(action) => match action {
+                redis_request::Command::ClusterScan(cluster_scan_command) => {
+                    cluster_scan(cluster_scan_command, client).await
+                }
+
                 redis_request::Command::SingleCommand(command) => {
                     match get_redis_command(&command) {
                         Ok(cmd) => match get_route(request.route.0, Some(&cmd)) {

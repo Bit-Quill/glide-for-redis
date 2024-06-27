@@ -826,4 +826,6 @@ class ClusterCommands(CoreCommands):
         )
         cursor_str = cast(str, casted_response[0])
         cursor = ClusterScanCursor(cursor_str)
-        return cast(List[Union[ClusterScanCursor, List[str]]], [cursor, casted_response[1]])
+        return cast(
+            List[Union[ClusterScanCursor, List[str]]], [cursor, casted_response[1]]
+        )

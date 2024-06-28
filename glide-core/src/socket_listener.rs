@@ -316,7 +316,7 @@ async fn send_command(
 async fn cluster_scan(cluster_scan: ClusterScan, mut client: Client) -> ClientUsageResult<Value> {
     // Since we don't send the cluster scan as a usual command, but throw a special function in redis-rs library,
     // we need to handle the command separately.
-    // Especially, we need to handle the cursor, which is not the cursor of the ValKey command, but the a hash of the ref
+    // Especially, we need to handle the cursor, which is not the cursor of the ValKey command, but the a id of the ref
     // to the ScanState in redis-rs stored in the cluster scan container.
     // We need to get the ref from the table or create a new one if the cursor is empty.
     let cursor = cluster_scan.cursor.into();

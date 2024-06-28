@@ -531,7 +531,7 @@ class GlideClusterClient(BaseClient, ClusterCommands):
             )
         request = RedisRequest()
         request.callback_idx = self._get_callback_index()
-        # Take out the hash string from the wrapping object
+        # Take out the id string from the wrapping object
         cursor_str = cursor.get_cursor()
         if cursor_str is not None:
             request.cluster_scan.cursor = cursor_str

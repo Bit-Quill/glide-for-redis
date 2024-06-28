@@ -34,8 +34,8 @@ impl Level {
 
 /// This struct is used to keep track of the cursor of a cluster scan.
 /// We want to avoid passing the cursor between layers of the application,
-/// So we keep the state in the container and only pass the hash of the cursor.
-/// The cursor is stored in the container and can be retrieved using the hash.
+/// So we keep the state in the container and only pass the id of the cursor.
+/// The cursor is stored in the container and can be retrieved using the id.
 /// The cursor is removed from the container when the object is deleted (dropped).
 #[pyclass]
 pub struct ClusterScanCursor {

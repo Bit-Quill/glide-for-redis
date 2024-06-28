@@ -22,7 +22,6 @@ TResult = Union[
     float,
     Set[T],
     List[T],
-    List[Union[str, List[str]]],
 ]
 TRequest = Union[RedisRequest, ConnectionRequest]
 # When routing to a single node, response will be T

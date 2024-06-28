@@ -744,7 +744,7 @@ class ClusterCommands(CoreCommands):
             Optional[str],
             await self._execute_command(RequestType.RandomKey, [], route),
         )
-    
+
     async def scan(
         self,
         cursor: ClusterScanCursor,

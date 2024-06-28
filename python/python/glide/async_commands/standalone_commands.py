@@ -665,7 +665,7 @@ class StandaloneCommands(CoreCommands):
             Optional[str],
             await self._execute_command(RequestType.RandomKey, []),
         )
-    
+
     async def scan(
         self,
         cursor: int,

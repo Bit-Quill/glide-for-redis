@@ -21,17 +21,14 @@ static CONTAINER: Lazy<Mutex<HashMap<String, ScanStateRC>>> =
 pub fn insert_cluster_scan_cursor(scan_state: ScanStateRC) -> String {
     let hash = Sha1::new();
     let hash = hash.digest().to_string();
-    CONTAINER
-        .lock()
-        .unwrap()
-        .insert(hash.clone(), scan_state.into());
+    CONTAINER.lock().unwrap().insert(hash.clone(), scan_state);
     hash
 }
 
 pub fn get_cluster_scan_cursor(hash: String) -> RedisResult<ScanStateRC> {
     let scan_state_rc = CONTAINER.lock().unwrap().get(&hash).cloned();
     match scan_state_rc {
-        Some(scan_state_rc) => Ok(scan_state_rc.into()),
+        Some(scan_state_rc) => Ok(scan_state_rc),
         None => Err(redis::RedisError::from((
             redis::ErrorKind::ResponseError,
             "Invalid scan_state_cursor hash",

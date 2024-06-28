@@ -705,7 +705,7 @@ class StandaloneCommands(CoreCommands):
             type (ObjectType): The type of object to scan for: STRING, LIST, SET, HASH, ZSET.
 
         Returns:
-            List[int, List[str]]: A tuple containing the next cursor value and a list of keys.
+            List[Union[int, List[str]]]: A List containing the next cursor value and a list of keys.
 
         Examples:
             >>> result = await client.scan(0)

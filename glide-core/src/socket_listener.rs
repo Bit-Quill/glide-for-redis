@@ -312,6 +312,7 @@ async fn send_command(
         .map_err(|err| err.into())
 }
 
+// Parse the cluster scan command parameters from protobuf and send the command to redis-rs.
 async fn cluster_scan(cluster_scan: ClusterScan, mut client: Client) -> ClientUsageResult<Value> {
     // Since we don't send the cluster scan as a usual command, but throw a special function in redis-rs library,
     // we need to handle the command separately.
@@ -333,10 +334,8 @@ async fn cluster_scan(cluster_scan: ClusterScan, mut client: Client) -> ClientUs
         }
         None => None,
     };
-    let count = match cluster_scan.count {
-        Some(count) => Some(count as usize),
-        None => None,
-    };
+    let count = cluster_scan.count.map(|count| count as usize);
+
     let object_type = match &cluster_scan.object_type {
         Some(object_type) => {
             let string_object_type = object_type.to_string();
@@ -356,7 +355,7 @@ async fn cluster_scan(cluster_scan: ClusterScan, mut client: Client) -> ClientUs
         .cluster_scan(&cluster_scan_cursor, &match_pattern, count, object_type)
         .await;
     match result {
-        Ok(result) => Ok(result.into()),
+        Ok(result) => Ok(result),
         Err(err) => Err(err.into()),
     }
 }

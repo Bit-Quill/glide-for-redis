@@ -4,6 +4,7 @@ package glide.api.commands;
 import glide.api.models.GlideString;
 import glide.api.models.Transaction;
 import glide.api.models.commands.SortOptions;
+import glide.api.models.commands.scan.ScanOptions;
 import glide.api.models.configuration.ReadFrom;
 import java.util.concurrent.CompletableFuture;
 
@@ -183,7 +184,7 @@ public interface GenericCommands {
     /**
      * Returns a random key from currently selected database.
      *
-     * @see <a href="https://redis.io/docs/latest/commands/randomkey/">redis.io</a> for details.
+     * @see <a href="https://valkey.io/commands/randomkey/">valkey.io</a> for details.
      * @return A random <code>key</code> from the database.
      * @example
      *     <pre>{@code
@@ -202,6 +203,7 @@ public interface GenericCommands {
      * apply transformations on sorted elements.<br>
      * To store the result into a new key, see {@link #sortStore(String, String, SortOptions)}.
      *
+     * @see <a href="https://valkey.io/commands/sort/">valkey.io</a> for details.
      * @param key The key of the list, set, or sorted set to be sorted.
      * @param sortOptions The {@link SortOptions}.
      * @return An <code>Array</code> of sorted elements.
@@ -224,6 +226,7 @@ public interface GenericCommands {
      * This command is routed depending on the client's {@link ReadFrom} strategy.
      *
      * @since Redis 7.0 and above.
+     * @see <a href="https://valkey.io/commands/sort/">valkey.io</a> for details.
      * @param key The key of the list, set, or sorted set to be sorted.
      * @param sortOptions The {@link SortOptions}.
      * @return An <code>Array</code> of sorted elements.
@@ -246,6 +249,7 @@ public interface GenericCommands {
      * key.<br>
      * To get the sort result without storing it into a key, see {@link #sort(String, SortOptions)}.
      *
+     * @see <a href="https://valkey.io/commands/sort/">valkey.io</a> for details.
      * @param key The key of the list, set, or sorted set to be sorted.
      * @param sortOptions The {@link SortOptions}.
      * @param destination The key where the sorted result will be stored.
@@ -265,4 +269,40 @@ public interface GenericCommands {
      * }</pre>
      */
     CompletableFuture<Long> sortStore(String key, String destination, SortOptions sortOptions);
+
+    /**
+     * Iterates incrementally over a database for matching keys.
+     *
+     * @see <a href="https://valkey.io/commands/zscan">valkey.io</a> for details.
+     * @param key The key of the sorted set.
+     * @param cursor The cursor that points to the next iteration of results. A value of <code>"0"
+     *     </code> indicates the start of the search.
+     * @return An <code>Array</code> of <code>Objects</code>. The first element is always the <code>
+     *     cursor</code> for the next iteration of results. <code>"0"</code> will be the <code>cursor
+     *     </code> returned on the last iteration of the sorted set. The second element is always an
+     *     <code>
+     *     Array</code> of the subset of the sorted set held in <code>key</code>. The array in the
+     *     second element is always a flattened series of <code>String</code> pairs, where the value
+     *     is at even indices and the score is at odd indices.
+     * @example
+     *     <pre>{@code
+     * // Assume key contains a set with 200 member-score pairs
+     * String cursor = "0";
+     * Object[] result;
+     * do {
+     *   result = client.zscan(key1, cursor).get();
+     *   cursor = result[0].toString();
+     *   Object[] stringResults = (Object[]) result[1];
+     *
+     *   System.out.println("\nZSCAN iteration:");
+     *   for (int i = 0; i < stringResults.length; i += 2) {
+     *     System.out.printf("{%s=%s}", stringResults[i], stringResults[i + 1]);
+     *     if (i + 2 < stringResults.length) {
+     *       System.out.print(", ");
+     *     }
+     *   }
+     * } while (!cursor.equals("0"));
+     * }</pre>
+     */
+    CompletableFuture<String[]> scan(String cursor, ScanOptions options);
 }

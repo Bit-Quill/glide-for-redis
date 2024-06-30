@@ -53,6 +53,7 @@ import glide.api.models.commands.FlushMode;
 import glide.api.models.commands.InfoOptions;
 import glide.api.models.commands.SortOptions;
 import glide.api.models.commands.function.FunctionRestorePolicy;
+import glide.api.models.commands.scan.ScanOptions;
 import glide.api.models.configuration.RedisClientConfiguration;
 import glide.managers.CommandManager;
 import glide.managers.ConnectionManager;
@@ -414,5 +415,10 @@ public class RedisClient extends BaseClient
         String[] arguments =
                 concatenateArrays(new String[] {key}, sortOptions.toArgs(), storeArguments);
         return commandManager.submitNewCommand(Sort, arguments, this::handleLongResponse);
+    }
+
+    @Override
+    public CompletableFuture<String[]> scan(String cursor, ScanOptions options) {
+        return null;
     }
 }

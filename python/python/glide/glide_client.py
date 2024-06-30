@@ -524,7 +524,7 @@ class GlideClusterClient(BaseClient, ClusterCommands):
         match: Optional[str] = None,
         count: Optional[int] = None,
         type: Optional[ObjectType] = None,
-    ) -> List[Union[str, List[str]]]:
+    ) -> List[Union[ClusterScanCursor, List[str]]]:
         if self._is_closed:
             raise ClosingError(
                 "Unable to execute requests; the client is closed. Please create a new client."
@@ -541,7 +541,9 @@ class GlideClusterClient(BaseClient, ClusterCommands):
             request.cluster_scan.count = count
         if type is not None:
             request.cluster_scan.object_type = type.value
-        return await self._write_request_await_response(request)
+        response = await self._write_request_await_response(request)
+        cursor_str = cast(str, response[0])
+        return [ClusterScanCursor(cursor_str), response[1]]
 
     def _get_protobuf_conn_request(self) -> ConnectionRequest:
         return self.config._create_a_protobuf_conn_request(cluster_mode=True)

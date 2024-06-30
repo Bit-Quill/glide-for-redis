@@ -67,30 +67,30 @@ class ListDirection(Enum):
 
 class ObjectType(Enum):
     """
-    Enumeration representing the type of ValKey object.
+    Enumeration representing the data types supported by the database.
     """
 
     STRING = "String"
     """
-    Represents a string object in Redis.
+    Represents a string data type.
     """
 
     LIST = "List"
     """
-    Represents a list object in Redis.
+    Represents a list data type.
     """
 
     SET = "Set"
     """
-    Represents a set object in Redis.
+    Represents a set data type.
     """
 
     ZSET = "ZSet"
     """
-    Represents a sorted set object in Redis.
+    Represents a sorted set data type.
     """
 
     HASH = "Hash"
     """
-    Represents a hash object in Redis.    
+    Represents a hash data type.    
     """

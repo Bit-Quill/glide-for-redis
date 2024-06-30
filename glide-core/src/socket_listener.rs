@@ -202,13 +202,13 @@ async fn write_result(
                 None
             }
         }
-        Err(ClienUsageError::Internal(error_message)) => {
+        Err(ClientUsageError::Internal(error_message)) => {
             log_error("internal error", &error_message);
             Some(response::response::Value::ClosingError(
                 error_message.into(),
             ))
         }
-        Err(ClienUsageError::User(error_message)) => {
+        Err(ClientUsageError::User(error_message)) => {
             log_error("user error", &error_message);
             let request_error = response::RequestError {
                 type_: response::RequestErrorType::Unspecified.into(),
@@ -217,7 +217,7 @@ async fn write_result(
             };
             Some(response::response::Value::RequestError(request_error))
         }
-        Err(ClienUsageError::Redis(err)) => {
+        Err(ClientUsageError::Redis(err)) => {
             let error_message = error_message(&err);
             log_warn("received error", error_message.as_str());
             log_debug("received error", format!("for callback {}", callback_index));
@@ -265,9 +265,9 @@ fn get_command(request: &Command) -> Option<Cmd> {
     request_type.get_command()
 }
 
-fn get_redis_command(command: &Command) -> Result<Cmd, ClienUsageError> {
+fn get_redis_command(command: &Command) -> Result<Cmd, ClientUsageError> {
     let Some(mut cmd) = get_command(command) else {
-        return Err(ClienUsageError::Internal(format!(
+        return Err(ClientUsageError::Internal(format!(
             "Received invalid request type: {:?}",
             command.request_type
         )));
@@ -286,14 +286,14 @@ fn get_redis_command(command: &Command) -> Result<Cmd, ClienUsageError> {
             }
         }
         None => {
-            return Err(ClienUsageError::Internal(
+            return Err(ClientUsageError::Internal(
                 "Failed to get request arguments, no arguments are set".to_string(),
             ));
         }
     };
 
     if cmd.args_iter().next().is_none() {
-        return Err(ClienUsageError::User(
+        return Err(ClientUsageError::User(
             "Received command without a command name or arguments".into(),
         ));
     }
@@ -314,50 +314,40 @@ async fn send_command(
 
 // Parse the cluster scan command parameters from protobuf and send the command to redis-rs.
 async fn cluster_scan(cluster_scan: ClusterScan, mut client: Client) -> ClientUsageResult<Value> {
-    // Since we don't send the cluster scan as a usual command, but throw a special function in redis-rs library,
+    // Since we don't send the cluster scan as a usual command, but through a special function in redis-rs library,
     // we need to handle the command separately.
-    // Especially, we need to handle the cursor, which is not the cursor of the ValKey command, but the a id of the ref
-    // to the ScanState in redis-rs stored in the cluster scan container.
+    // Specifically, we need to handle the cursor, which is not the cursor returned from the server,
+    // but the ID of the ScanStateRC, stored in the cluster scan container.
     // We need to get the ref from the table or create a new one if the cursor is empty.
-    let cursor = cluster_scan.cursor.into();
-    let cluster_scan_cursor = if cursor == String::new() {
+    let cursor: String = cluster_scan.cursor.into();
+    let cluster_scan_cursor = if cursor.is_empty() {
         ScanStateRC::new()
     } else {
         get_cluster_scan_cursor(cursor)?
     };
 
-    let match_pattern_string: String;
-    let match_pattern = match cluster_scan.match_pattern {
-        Some(pattern) => {
-            match_pattern_string = pattern.to_string();
-            Some(match_pattern_string.as_str())
-        }
-        None => None,
-    };
+    let match_pattern_string = cluster_scan
+        .match_pattern
+        .map(|pattern| pattern.to_string());
+    let match_pattern = match_pattern_string.as_deref();
     let count = cluster_scan.count.map(|count| count as usize);
 
-    let object_type = match &cluster_scan.object_type {
-        Some(object_type) => {
-            let string_object_type = object_type.to_string();
-            match string_object_type.as_str() {
+    let object_type =
+        cluster_scan
+            .object_type
+            .and_then(|object_type| match object_type.to_string().as_str() {
                 "String" => Some(redis::ObjectType::String),
                 "List" => Some(redis::ObjectType::List),
                 "Set" => Some(redis::ObjectType::Set),
                 "ZSet" => Some(redis::ObjectType::ZSet),
                 "Hash" => Some(redis::ObjectType::Hash),
                 _ => None,
-            }
-        }
-        None => None,
-    };
+            });
 
-    let result = client
+    client
         .cluster_scan(&cluster_scan_cursor, &match_pattern, count, object_type)
-        .await;
-    match result {
-        Ok(result) => Ok(result),
-        Err(err) => Err(err.into()),
-    }
+        .await
+        .map_err(|err| err.into())
 }
 
 async fn invoke_script(
@@ -395,7 +385,7 @@ fn get_slot_addr(slot_type: &protobuf::EnumOrUnknown<SlotTypes>) -> ClientUsageR
             SlotTypes::Primary => SlotAddr::Master,
             SlotTypes::Replica => SlotAddr::ReplicaRequired,
         })
-        .map_err(|id| ClienUsageError::Internal(format!("Received unexpected slot id type {id}")))
+        .map_err(|id| ClientUsageError::Internal(format!("Received unexpected slot id type {id}")))
 }
 
 fn get_route(
@@ -415,7 +405,7 @@ fn get_route(
     match route {
         Value::SimpleRoutes(simple_route) => {
             let simple_route = simple_route.enum_value().map_err(|id| {
-                ClienUsageError::Internal(format!("Received unexpected simple route type {id}"))
+                ClientUsageError::Internal(format!("Received unexpected simple route type {id}"))
             })?;
             match simple_route {
                 crate::redis_request::SimpleRoutes::AllNodes => Ok(Some(RoutingInfo::MultiNode((
@@ -467,7 +457,6 @@ fn handle_request(request: RedisRequest, client: Client, writer: Rc<Writer>) {
                 redis_request::Command::ClusterScan(cluster_scan_command) => {
                     cluster_scan(cluster_scan_command, client).await
                 }
-
                 redis_request::Command::SingleCommand(command) => {
                     match get_redis_command(&command) {
                         Ok(cmd) => match get_route(request.route.0, Some(&cmd)) {
@@ -498,7 +487,7 @@ fn handle_request(request: RedisRequest, client: Client, writer: Rc<Writer>) {
                         request.callback_idx
                     ),
                 );
-                Err(ClienUsageError::Internal(
+                Err(ClientUsageError::Internal(
                     "Received empty request".to_string(),
                 ))
             }
@@ -816,7 +805,7 @@ enum ClientCreationError {
 
 /// Enum describing errors received during client usage.
 #[derive(Debug, Error)]
-enum ClienUsageError {
+enum ClientUsageError {
     #[error("Redis error: {0}")]
     Redis(#[from] RedisError),
     /// An error that stems from wrong behavior of the client.
@@ -827,7 +816,7 @@ enum ClienUsageError {
     User(String),
 }
 
-type ClientUsageResult<T> = Result<T, ClienUsageError>;
+type ClientUsageResult<T> = Result<T, ClientUsageError>;
 
 /// Defines errors caused the connection to close.
 #[derive(Debug, Clone)]

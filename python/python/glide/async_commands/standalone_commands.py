@@ -668,34 +668,27 @@ class StandaloneCommands(CoreCommands):
 
     async def scan(
         self,
-        cursor: int,
+        cursor: str,
         match: Optional[str] = None,
         count: Optional[int] = None,
         type: Optional[ObjectType] = None,
-    ) -> List[Union[int, List[str]]]:
+    ) -> List[Union[str, List[str]]]:
         """
         Incrementally iterate over a collection of keys.
         SCAN is a cursor based iterator. This means that at every call of the command,
         the server returns an updated cursor that the user needs to use as the cursor argument in the next call.
-        An iteration starts when the cursor is set to 0, and terminates when the cursor returned by the server is 0.
-
-        The SCAN command, and the other commands in the SCAN family,
-        are able to provide to the user a set of guarantees associated to full iterations.
+        An iteration starts when the cursor is set to "0", and terminates when the cursor returned by the server is "0".
 
         A full iteration always retrieves all the elements that were present
         in the collection from the start to the end of a full iteration.
-        A full iteration never returns any element that was NOT present in the collection
-        from the start to the end of a full iteration.
-        However because SCAN has very little state associated (just the cursor) it has the following drawbacks:
-        A given element may be returned multiple times.
-        Elements that were not constantly present in the collection during a full iteration, may be returned or not/
+        Elements that were not constantly present in the collection during a full iteration, may be returned or not.
 
         See https://valkey.io/commands/scan for more details.
 
         Args:
-            cursor (int): The cursor used for the iteration. In the first iteration, the cursor should be set to 0.
-                If the cursor sent to the server is not 0 or is not a valid cursor,
-                the result are undefined.
+            cursor (str): The cursor used for iteration. For the first iteration, the cursor should be set to "0".
+              Using a non-zero cursor in the first iteration,
+              or an invalid cursor at any iteration, will lead to undefined results.
             match (Optional[str]): A pattern to match keys against,
                 for example, "key*" will return all keys starting with "key".
             count (Optional[int]): The number of keys to return per iteration.
@@ -705,32 +698,33 @@ class StandaloneCommands(CoreCommands):
             type (ObjectType): The type of object to scan for: STRING, LIST, SET, HASH, ZSET.
 
         Returns:
-            List[Union[int, List[str]]]: A List containing the next cursor value and a list of keys.
+            List[Union[str, List[str]]]: A List containing the next cursor value and a list of keys,
+                formatted as ["23", [key1, key2, ...]]
 
         Examples:
-            >>> result = await client.scan(0)
-                print(result) #[17, ['key1', 'key2', 'key3', 'key4', 'key5', 'set1', 'set2', 'set3']]
-                result = await client.scan(17)
-                print(result) #[349, ['key4', 'key5', 'set1', 'hash1', 'zset1', 'list1', 'list2',
+            >>> result = await client.scan("0")
+                print(result) #["17", ['key1', 'key2', 'key3', 'key4', 'key5', 'set1', 'set2', 'set3']]
+                first_cursor_result = result[0]
+                result = await client.scan(first_cursor_result)
+                print(result) #["349", ['key4', 'key5', 'set1', 'hash1', 'zset1', 'list1', 'list2',
                                         'list3', 'zset2', 'zset3', 'zset4', 'zset5', 'zset6']]
-                result = await client.scan(349)
-                print(result) #[0, ['key6', 'key7']]
+                result = await client.scan(result[0])
+                print(result) #["0", ['key6', 'key7']]
 
-            >>> result = await client.scan(17, match="key*", count=2)
-                print(result) #[6, ['key4', 'key5']]
+            >>> result = await client.scan(first_cursor_result, match="key*", count=2)
+                print(result) #["6", ['key4', 'key5']]
 
-            >>> result = await client.scan(0, type=ObjectType.Set)
-                print(result) #[362, ['set1', 'set2', 'set3']]
+            >>> result = await client.scan("0", type=ObjectType.Set)
+                print(result) #["362", ['set1', 'set2', 'set3']]
         """
-        args = [str(cursor)]
+        args = [cursor]
         if match:
             args.extend(["MATCH", match])
         if count:
             args.extend(["COUNT", str(count)])
         if type:
             args.extend(["TYPE", type.value])
-        response = await self._execute_command(RequestType.Scan, args)
-        casted_response = cast(List[Union[int, List[str]]], response)
-        str_cursor = cast(str, casted_response[0])
-        keys = cast(List[str], casted_response[1])
-        return [int(str_cursor), keys]
+        return cast(
+            List[Union[str, List[str]]],
+            await self._execute_command(RequestType.Scan, args),
+        )

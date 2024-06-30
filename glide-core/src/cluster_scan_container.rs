@@ -1,7 +1,7 @@
 /**
  * Copyright GLIDE-for-Redis Project Contributors - SPDX Identifier: Apache-2.0
  */
-use logger_core::log_info;
+use logger_core::log_debug;
 use nanoid::nanoid;
 use once_cell::sync::Lazy;
 use redis::{RedisResult, ScanStateRC};
@@ -21,6 +21,10 @@ static CONTAINER: Lazy<Mutex<HashMap<String, ScanStateRC>>> =
 pub fn insert_cluster_scan_cursor(scan_state: ScanStateRC) -> String {
     let id = nanoid!();
     CONTAINER.lock().unwrap().insert(id.clone(), scan_state);
+    log_debug(
+        "scan_state_cursor insert",
+        format!("Inserted to container scan_state_cursor with id: `{id}`"),
+    );
     id
 }
 
@@ -31,14 +35,15 @@ pub fn get_cluster_scan_cursor(id: String) -> RedisResult<ScanStateRC> {
         None => Err(redis::RedisError::from((
             redis::ErrorKind::ResponseError,
             "Invalid scan_state_cursor id",
+            format!("The scan_state_cursor sent with id: `{id}` does not exist"),
         ))),
     }
 }
 
 pub fn remove_scan_state_cursor(id: String) {
-    log_info(
-        "scan_state_cursor lifetime",
-        format!("Removed scan_state_cursor with id: `{id}`"),
+    log_debug(
+        "scan_state_cursor remove",
+        format!("Removed from container scan_state_cursor with id: `{id}`"),
     );
     CONTAINER.lock().unwrap().remove(&id);
 }

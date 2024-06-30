@@ -38,6 +38,7 @@ impl Level {
 /// The cursor is stored in the container and can be retrieved using the id.
 /// The cursor is removed from the container when the object is deleted (dropped).
 #[pyclass]
+#[derive(Default)]
 pub struct ClusterScanCursor {
     cursor: String,
 }
@@ -48,9 +49,7 @@ impl ClusterScanCursor {
     fn new(new_cursor: Option<String>) -> Self {
         match new_cursor {
             Some(cursor) => ClusterScanCursor { cursor },
-            None => ClusterScanCursor {
-                cursor: String::new(),
-            },
+            None => ClusterScanCursor::default(),
         }
     }
 

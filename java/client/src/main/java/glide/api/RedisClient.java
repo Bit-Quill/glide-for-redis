@@ -36,6 +36,7 @@ import static redis_request.RedisRequestOuterClass.RequestType.Lolwut;
 import static redis_request.RedisRequestOuterClass.RequestType.Move;
 import static redis_request.RedisRequestOuterClass.RequestType.Ping;
 import static redis_request.RedisRequestOuterClass.RequestType.RandomKey;
+import static redis_request.RedisRequestOuterClass.RequestType.Scan;
 import static redis_request.RedisRequestOuterClass.RequestType.Select;
 import static redis_request.RedisRequestOuterClass.RequestType.Sort;
 import static redis_request.RedisRequestOuterClass.RequestType.SortReadOnly;
@@ -418,7 +419,14 @@ public class RedisClient extends BaseClient
     }
 
     @Override
-    public CompletableFuture<String[]> scan(String cursor, ScanOptions options) {
-        return null;
+    public CompletableFuture<Object[]> scan(String cursor) {
+        return commandManager.submitNewCommand(Scan, new String[] {cursor}, this::handleArrayResponse);
+    }
+
+    @Override
+    public CompletableFuture<Object[]> scan(String cursor, ScanOptions options) {
+        String[] arguments =
+            ArrayUtils.addFirst(options.toArgs(), cursor);
+        return commandManager.submitNewCommand(Scan, arguments, this::handleArrayResponse);
     }
 }

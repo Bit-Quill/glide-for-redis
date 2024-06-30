@@ -5,7 +5,6 @@ import glide.api.models.GlideString;
 import glide.api.models.Transaction;
 import glide.api.models.commands.SortOptions;
 import glide.api.models.commands.scan.ScanOptions;
-import glide.api.models.commands.scan.ZScanOptions;
 import glide.api.models.configuration.ReadFrom;
 import java.util.concurrent.CompletableFuture;
 

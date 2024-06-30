@@ -425,8 +425,7 @@ public class RedisClient extends BaseClient
 
     @Override
     public CompletableFuture<Object[]> scan(String cursor, ScanOptions options) {
-        String[] arguments =
-            ArrayUtils.addFirst(options.toArgs(), cursor);
+        String[] arguments = ArrayUtils.addFirst(options.toArgs(), cursor);
         return commandManager.submitNewCommand(Scan, arguments, this::handleArrayResponse);
     }
 }

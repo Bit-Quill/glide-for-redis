@@ -43,6 +43,7 @@ import static glide.api.models.commands.geospatial.GeoSearchOrigin.FROMMEMBER_VA
 import static glide.api.models.commands.scan.BaseScanOptions.COUNT_OPTION_STRING;
 import static glide.api.models.commands.scan.BaseScanOptions.MATCH_OPTION_STRING;
 import static glide.api.models.commands.scan.ScanOptions.ObjectType.STRING;
+import static glide.api.models.commands.scan.ScanOptions.TYPE_OPTION_STRING;
 import static glide.api.models.commands.stream.StreamAddOptions.NO_MAKE_STREAM_REDIS_API;
 import static glide.api.models.commands.stream.StreamGroupOptions.ENTRIES_READ_REDIS_API;
 import static glide.api.models.commands.stream.StreamGroupOptions.MAKE_STREAM_REDIS_API;
@@ -9014,7 +9015,7 @@ public class RedisClientTest {
 
         // match on protobuf request
         when(commandManager.<Object[]>submitNewCommand(eq(Scan), eq(new String[] {cursor}), any()))
-            .thenReturn(testResponse);
+                .thenReturn(testResponse);
 
         // exercise
         CompletableFuture<Object[]> response = service.scan(cursor);
@@ -9030,19 +9031,26 @@ public class RedisClientTest {
     public void scan_with_options_returns_succees() {
         // setup
         String cursor = "0";
-        ScanOptions options = ScanOptions.builder().matchPattern("match").count(10L).type(STRING).build();
-        String[] args = new String[] {
-            cursor,
-            MATCH_OPTION_STRING,
-        };
+        ScanOptions options =
+                ScanOptions.builder().matchPattern("match").count(10L).type(STRING).build();
+        String[] args =
+                new String[] {
+                    cursor,
+                    MATCH_OPTION_STRING,
+                    "match",
+                    COUNT_OPTION_STRING,
+                    "10",
+                    TYPE_OPTION_STRING,
+                    STRING.toString()
+                };
         Object[] value = new Object[] {0L, new String[] {"hello", "world"}};
 
         CompletableFuture<Object[]> testResponse = new CompletableFuture<>();
         testResponse.complete(value);
 
         // match on protobuf request
-        when(commandManager.<Object[]>submitNewCommand(eq(Scan), eq(new String[] {cursor}), any()))
-            .thenReturn(testResponse);
+        when(commandManager.<Object[]>submitNewCommand(eq(Scan), eq(args), any()))
+                .thenReturn(testResponse);
 
         // exercise
         CompletableFuture<Object[]> response = service.scan(cursor, options);

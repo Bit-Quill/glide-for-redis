@@ -154,6 +154,7 @@ public interface GenericClusterCommands {
     CompletableFuture<String> randomKey();
 
     CompletableFuture<Object[]> clusterScan(ClusterScanCursor cursor);
+
     CompletableFuture<Object[]> clusterScan(ClusterScanCursor cursor, ScanOptions options);
 
     /**

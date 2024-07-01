@@ -59,6 +59,7 @@ import glide.api.models.commands.scan.ScanOptions;
 import glide.api.models.configuration.RedisClusterClientConfiguration;
 import glide.api.models.configuration.RequestRoutingConfiguration.Route;
 import glide.api.models.configuration.RequestRoutingConfiguration.SingleNodeRoute;
+import glide.ffi.resolvers.NativeClusterScanCursor;
 import glide.managers.CommandManager;
 import glide.managers.ConnectionManager;
 import java.util.Arrays;
@@ -783,12 +784,18 @@ public class RedisClusterClient extends BaseClient
     }
 
     @Override
-    public CompletableFuture<Object[]> scan(@NonNull ClusterScanCursor cursor, @NonNull ScanOptions options) {
+    public CompletableFuture<Object[]> scan(
+            @NonNull ClusterScanCursor cursor, @NonNull ScanOptions options) {
         final CompletableFuture<Object[]> result =
-            commandManager.submitClusterScan(cursor, options, this::handleArrayResponse);
+                commandManager.submitClusterScan(cursor, options, this::handleArrayResponse);
 
-        // Wrap the cursor string from the internal layer into a ClusterScanCursor before exposing to the caller.
-        return result.thenApply(internalResult -> new Object[] { internalResult[0].toString(), internalResult[1] });
+        // Wrap the cursor string from the internal layer into a ClusterScanCursor before exposing to
+        // the caller.
+        return result.thenApply(
+                internalResult ->
+                        new Object[] {
+                            new NativeClusterScanCursor(internalResult[0].toString()), internalResult[1]
+                        });
     }
 
     @Override

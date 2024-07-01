@@ -172,7 +172,7 @@ public class CommandManager {
     }
 
     public <T> CompletableFuture<T> submitClusterScan(
-            String cursor,
+            ClusterScanCursor cursor,
             @NonNull ScanOptions options,
             RedisExceptionCheckedFunction<Response, T> responseHandler) {
 
@@ -295,13 +295,13 @@ public class CommandManager {
     }
 
     protected RedisRequest.Builder prepareRedisRequest(
-            String cursor, ScanOptions options) {
+            @NonNull ClusterScanCursor cursor, @NonNull ScanOptions options) {
 
         RedisRequestOuterClass.ClusterScan.Builder clusterScanBuilder =
                 RedisRequestOuterClass.ClusterScan.newBuilder();
 
-        if (cursor != null) {
-            clusterScanBuilder.setCursor(cursor);
+        if (cursor != ClusterScanCursor.INITIAL_CURSOR_INSTANCE) {
+            clusterScanBuilder.setCursor(cursor.getCursorHandle());
         }
 
         options.populate(clusterScanBuilder);

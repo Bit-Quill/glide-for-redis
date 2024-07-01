@@ -25,6 +25,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
+
+import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import redis_request.RedisRequestOuterClass;
 import redis_request.RedisRequestOuterClass.Command;
@@ -170,8 +172,8 @@ public class CommandManager {
     }
 
     public <T> CompletableFuture<T> submitClusterScan(
-            ClusterScanCursor cursor,
-            ScanOptions options,
+            String cursor,
+            @NonNull ScanOptions options,
             RedisExceptionCheckedFunction<Response, T> responseHandler) {
 
         final RedisRequest.Builder command = prepareRedisRequest(cursor, options);
@@ -293,23 +295,13 @@ public class CommandManager {
     }
 
     protected RedisRequest.Builder prepareRedisRequest(
-            ClusterScanCursor cursor, ScanOptions options) {
+            String cursor, ScanOptions options) {
 
         RedisRequestOuterClass.ClusterScan.Builder clusterScanBuilder =
                 RedisRequestOuterClass.ClusterScan.newBuilder();
 
-        if (cursor != ClusterScanCursor.initialCursor()) {
-            if (cursor.isFinished()) {
-                throw new IllegalArgumentException("Cluster SCAN requires an unfinished cursor.");
-            }
-
-            // Clean-up the old cursor since the caller should be done with it.
-            try {
-                cursor.close();
-                clusterScanBuilder.setCursor(cursor.getCursor());
-            } catch (Exception ex) {
-                throw new RuntimeException(ex);
-            }
+        if (cursor != null) {
+            clusterScanBuilder.setCursor(cursor);
         }
 
         options.populate(clusterScanBuilder);

@@ -7614,7 +7614,7 @@ public class RedisClientTest {
 
         String[] arguments =
                 concatenateArrays(
-                        new String[] {key, groupName, consumer, "18", start, Long.toString(count)});
+                        new String[] {key, groupName, consumer, "18", start, "COUNT", Long.toString(count)});
         Object[] mockResult = new Object[] {start, completedResult, deletedMessageIds};
 
         CompletableFuture<Object[]> testResponse = new CompletableFuture<>();
@@ -7688,7 +7688,7 @@ public class RedisClientTest {
 
         String[] arguments =
                 concatenateArrays(
-                        new String[] {key, groupName, consumer, "18", start, Long.toString(1234), "JUSTID"});
+                        new String[] {key, groupName, consumer, "18", start, "COUNT", Long.toString(1234), "JUSTID"});
         Object[] mockResult = new Object[] {start, completedResult, deletedMessageIds};
 
         CompletableFuture<Object[]> testResponse = new CompletableFuture<>();

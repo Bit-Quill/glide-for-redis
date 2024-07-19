@@ -5,6 +5,7 @@
 import { createLeakedStringVec, MAX_REQUEST_ARGS_LEN } from "glide-rs";
 import Long from "long";
 import { LPosOptions } from "./command-options/LPosOptions";
+import { ListDirection } from "./command-options/ListDirection";
 
 import { command_request } from "./ProtobufMessage";
 
@@ -535,8 +536,18 @@ export function createLLen(key: string): command_request.Command {
 /**
  * @internal
  */
-export function createLMove(source: string, destination: string, where_from: ListDirection, where_to: ListDirection): command_request.Command {
-    return createCommand(RequestType.LMove, [source, destination, where_from.value, where_to.value]);
+export function createLMove(
+    source: string,
+    destination: string,
+    where_from: ListDirection,
+    where_to: ListDirection,
+): command_request.Command {
+    return createCommand(RequestType.LMove, [
+        source,
+        destination,
+        where_from.toString(),
+        where_to.toString(),
+    ]);
 }
 
 /**

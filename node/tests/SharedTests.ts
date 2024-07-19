@@ -29,6 +29,7 @@ import {
 } from "./TestUtilities";
 import { SingleNodeRoute } from "../build-ts/src/GlideClusterClient";
 import { LPosOptions } from "../build-ts/src/command-options/LPosOptions";
+import { ListDirection } from "../build-ts/src/command-options/ListDirection";
 
 async function getVersion(): Promise<[number, number, number]> {
     const versionString = await new Promise<string>((resolve, reject) => {
@@ -927,6 +928,110 @@ export function runBaseTests<Context>(config: {
                         "Operation against a key holding the wrong kind of value",
                     );
                 }
+            }, protocol);
+        },
+        config.timeout,
+    );
+
+    it.each([ProtocolVersion.RESP2, ProtocolVersion.RESP3])(
+        `lmove list_%p`,
+        async (protocol) => {
+            await runTest(async (client: BaseClient) => {
+                const key1 = uuidv4();
+                const key2 = uuidv4();
+                const non_existing_key = uuidv4();
+                const non_list_key = uuidv4();
+                const lpushArgs1 = ["four", "three", "two", "one"];
+                const lpushArgs2 = ["six", "five", "four"];
+
+                // source does not exist or is empty
+                await expect(
+                    client.lmove(
+                        key1,
+                        key2,
+                        ListDirection.LEFT,
+                        ListDirection.RIGHT
+                    )
+                ).toEqual(null);
+
+                // only source exists, only source elements gets popped, creates a list at nonExistingKey
+                await expect(client.lpush(key1, lpushArgs1)).toEqual(
+                    lpushArgs1.length,
+                );
+                await expect(
+                    client.lmove(
+                        key1,
+                        non_existing_key,
+                        ListDirection.RIGHT,
+                        ListDirection.LEFT
+                    )
+                ).toEqual("four");
+                await expect(client.lrange(key1, 0, -1)).toEqual([
+                    "one",
+                    "two",
+                    "three",
+                ]);
+
+                // source and destination are the same, performing list rotation, "three" gets popped and added back
+                await expect(
+                    client.lmove(
+                        key1,
+                        key1,
+                        ListDirection.LEFT,
+                        ListDirection.LEFT
+                    )
+                ).toEqual("one");
+                await expect(client.lrange(key1, 0, -1)).toEqual([
+                    "one",
+                    "two",
+                    "three",
+                ]);
+
+                // normal use case, "three" gets popped and added to the left of destination
+                await expect(client.lpush(key2, lpushArgs2)).toEqual(
+                    lpushArgs2.length,
+                );
+                await expect(
+                    client.lmove(
+                        key1,
+                        key2,
+                        ListDirection.RIGHT,
+                        ListDirection.LEFT
+                    )
+                ).toEqual("three");
+                await expect(client.lrange(key1, 0, -1)).toEqual([
+                    "one",
+                    "two",
+                ]);
+                await expect(client.lrange(key2, 0, -1)).toEqual([
+                    "three",
+                    "four",
+                    "five",
+                    "six",
+                ]);
+
+                // source exists but is not a list type key
+                await expect(client.set(non_list_key, "MotAList")).toEqual(
+                    "OK",
+                );
+                await expect(
+                    client.lmove(
+                        non_list_key,
+                        key1,
+                        ListDirection.LEFT,
+                        ListDirection.LEFT
+                    ),
+                ).rejects.toThrow(RequestError);
+
+                // destination exists but is not a list type key
+                await expect(
+                    client.lmove(
+                        key1,
+                        non_list_key,
+                        ListDirection.LEFT,
+                        ListDirection.LEFT,
+                    ),
+                ).rejects.toThrow(RequestError);
             }, protocol);
         },
         config.timeout,

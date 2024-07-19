@@ -52,6 +52,7 @@ import {
     createLIndex,
     createLInsert,
     createLLen,
+    createLMove,
     createLPop,
     createLPos,
     createLPush,
@@ -1365,6 +1366,20 @@ export class BaseClient {
      */
     public llen(key: string): Promise<number> {
         return this.createWritePromise(createLLen(key));
+    }
+
+    /**
+     *
+     */
+    public lmove(
+        source: string,
+        destination: string,
+        where_from: ListDirection,
+        where_to: ListDirection,
+    ): Promise<string> {
+        return this.createWritePromise(
+            createLMove(source, destination, where_from, where_to),
+        );
     }
 
     /**

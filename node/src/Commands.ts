@@ -535,6 +535,13 @@ export function createLLen(key: string): command_request.Command {
 /**
  * @internal
  */
+export function createLMove(source: string, destination: string, where_from: ListDirection, where_to: ListDirection): command_request.Command {
+    return createCommand(RequestType.LMove, [source, destination, where_from.value, where_to.value]);
+}
+
+/**
+ * @internal
+ */
 export function createLSet(
     key: string,
     index: number,

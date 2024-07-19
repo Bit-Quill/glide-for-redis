@@ -1405,7 +1405,7 @@ export class BaseClient {
         destination: string,
         where_from: ListDirection,
         where_to: ListDirection,
-    ): Promise<string> {
+    ): Promise<string | null> {
         return this.createWritePromise(
             createLMove(source, destination, where_from, where_to),
         );

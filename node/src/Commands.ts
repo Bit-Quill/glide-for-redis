@@ -545,8 +545,8 @@ export function createLMove(
     return createCommand(RequestType.LMove, [
         source,
         destination,
-        where_from.toString(),
-        where_to.toString(),
+        ListDirection[where_from],
+        ListDirection[where_to],
     ]);
 }
 

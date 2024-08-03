@@ -3739,7 +3739,7 @@ export class BaseClient {
      * console.log(await client.xgroupCreate("mystream", "mygroup", "0-0")); // Output is "OK"
      * ```
      */
-    public xgroupCreate(
+    public async xgroupCreate(
         key: string,
         groupName: string,
         id: string,
@@ -3765,7 +3765,10 @@ export class BaseClient {
      * console.log(await client.xgroupDestroy("mystream", "mygroup")); // Output is true
      * ```
      */
-    public xgroupDestroy(key: string, groupName: string): Promise<boolean> {
+    public async xgroupDestroy(
+        key: string,
+        groupName: string,
+    ): Promise<boolean> {
         return this.createWritePromise(createXGroupDestroy(key, groupName));
     }
 

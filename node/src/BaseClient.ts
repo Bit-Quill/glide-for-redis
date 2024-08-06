@@ -154,9 +154,9 @@ import {
     createXAdd,
     createXDel,
     createXGroupCreate,
-    createXGroupDestroy,
     createXGroupCreateConsumer,
     createXGroupDelConsumer,
+    createXGroupDestroy,
     createXLen,
     createXRead,
     createXTrim,
@@ -3775,7 +3775,7 @@ export class BaseClient {
     }
 
     /**
-     * Creates a consumer named `consumer_name` in the consumer group `group_name` for the stream stored at `key`.
+     * Creates a consumer named `consumerName` in the consumer group `groupName` for the stream stored at `key`.
      *
      * See https://valkey.io/commands/xgroup-createconsumer for more details.
      *
@@ -3801,7 +3801,7 @@ export class BaseClient {
     }
 
     /**
-     * Deletes a consumer named `consumer_name` in the consumer group `group_name` for the stream stored at `key`.
+     * Deletes a consumer named `consumerName` in the consumer group `groupName` for the stream stored at `key`.
      *
      * See https://valkey.io/commands/xgroup-delconsumer for more details.
      *

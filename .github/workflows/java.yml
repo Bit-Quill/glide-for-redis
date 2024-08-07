@@ -104,9 +104,9 @@ jobs:
               working-directory: java
               run: ./gradlew spotlessDiagnose | grep 'All formatters are well behaved for all files'
 
-            - uses: ./.github/workflows/test-benchmark
-              with:
-                  language-flag: -java
+            - name: bench
+              working-directory: java
+              run: ./gradlew :benchmarks:run --args="--resultsFile big_data.json --dataSize 40000000 --concurrentTasks 1 --clients all --host clustercfg.barshaul-babushka-cluster-test-tls-2.ez432c.use1.cache.amazonaws.com --clientCount 1 --clusterModeEnabled --tls"
 
             - name: Upload test & spotbugs reports
               if: always()
@@ -120,6 +120,7 @@ jobs:
                       utils/clusters/**
                       benchmarks/results/**
                       java/client/build/reports/spotbugs/**
+                      java/benchmarks/big_data.json
 
     build-amazonlinux-latest:
         if: github.repository_owner == 'valkey-io'

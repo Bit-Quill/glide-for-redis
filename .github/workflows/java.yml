@@ -46,7 +46,7 @@ jobs:
 
     build-and-test-java-client:
         needs: load-engine-matrix
-        timeout-minutes: 35
+        timeout-minutes: 60
         strategy:
             # Run all jobs
             fail-fast: false

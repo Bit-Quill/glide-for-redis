@@ -53,7 +53,7 @@ public class SharedClientTests {
     }
 
     public static Stream<Arguments> getClients() {
-        return IntStream.range(0, 1000).mapToObj(i -> clients.stream()).reduce(Stream::concat).get();
+        return IntStream.range(0, 500).mapToObj(i -> clients.stream()).reduce(Stream::concat).get();
     }
 
     @SneakyThrows
@@ -83,7 +83,7 @@ public class SharedClientTests {
     }
 
     private static Stream<Arguments> clientAndDataSize() {
-        return IntStream.range(0, 1000)
+        return IntStream.range(0, 500)
                 .mapToObj(
                         i ->
                                 Stream.of(

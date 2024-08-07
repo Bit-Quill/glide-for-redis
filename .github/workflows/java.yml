@@ -106,7 +106,7 @@ jobs:
 
             - name: bench
               working-directory: java
-              run: ./gradlew :benchmarks:run --args="--resultsFile big_data.json --dataSize 40000000 --concurrentTasks 1 --clients all --host clustercfg.barshaul-babushka-cluster-test-tls-2.ez432c.use1.cache.amazonaws.com --clientCount 1 --clusterModeEnabled --tls"
+              run: ./gradlew :benchmarks:run --args="--resultsFile big_data.json --dataSize 40000000 --concurrentTasks 1 --clients all --clientCount 1"
 
             - name: Upload test & spotbugs reports
               if: always()

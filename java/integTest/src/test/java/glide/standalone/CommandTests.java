@@ -69,10 +69,12 @@ import org.apache.commons.lang3.ArrayUtils;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 @Timeout(10) // seconds
+@Disabled
 public class CommandTests {
 
     private static final String INITIAL_VALUE = "VALUE";

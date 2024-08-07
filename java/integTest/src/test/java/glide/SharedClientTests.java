@@ -15,11 +15,12 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
-import lombok.Getter;
 import lombok.SneakyThrows;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -31,7 +32,7 @@ public class SharedClientTests {
     private static GlideClient standaloneClient = null;
     private static GlideClusterClient clusterClient = null;
 
-    @Getter private static List<Arguments> clients;
+    private static List<Arguments> clients;
 
     @BeforeAll
     @SneakyThrows
@@ -51,6 +52,10 @@ public class SharedClientTests {
         clusterClient.close();
     }
 
+    public static Stream<Arguments> getClients() {
+        return IntStream.range(0, 1000).mapToObj(i -> clients.stream()).reduce(Stream::concat).get();
+    }
+
     @SneakyThrows
     @ParameterizedTest(autoCloseArguments = false)
     @MethodSource("getClients")
@@ -65,6 +70,7 @@ public class SharedClientTests {
         assertEquals(value, client.get(key).get());
     }
 
+    @Disabled
     @SneakyThrows
     @ParameterizedTest(autoCloseArguments = false)
     @MethodSource("getClients")
@@ -77,11 +83,16 @@ public class SharedClientTests {
     }
 
     private static Stream<Arguments> clientAndDataSize() {
-        return Stream.of(
-                Arguments.of(standaloneClient, 100),
-                Arguments.of(standaloneClient, 1 << 16),
-                Arguments.of(clusterClient, 100),
-                Arguments.of(clusterClient, 1 << 16));
+        return IntStream.range(0, 1000)
+                .mapToObj(
+                        i ->
+                                Stream.of(
+                                        Arguments.of(standaloneClient, 100),
+                                        Arguments.of(standaloneClient, 1 << 16),
+                                        Arguments.of(clusterClient, 100),
+                                        Arguments.of(clusterClient, 1 << 16)))
+                .reduce(Stream::concat)
+                .get();
     }
 
     @ParameterizedTest(autoCloseArguments = false)

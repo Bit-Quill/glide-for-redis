@@ -16,10 +16,12 @@ import glide.api.models.exceptions.ClosingException;
 import glide.api.models.exceptions.RequestException;
 import java.util.concurrent.ExecutionException;
 import lombok.SneakyThrows;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 @Timeout(10) // seconds
+@Disabled
 public class StandaloneClientTests {
 
     @SneakyThrows

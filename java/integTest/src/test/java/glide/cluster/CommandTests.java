@@ -92,6 +92,7 @@ import java.util.stream.Stream;
 import lombok.SneakyThrows;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -994,7 +995,7 @@ public class CommandTests {
         future.get();
     }
 
-    @Test
+    @RepeatedTest(1000)
     @SneakyThrows
     public void flushall() {
         if (SERVER_VERSION.isGreaterThanOrEqualTo("6.2.0")) {

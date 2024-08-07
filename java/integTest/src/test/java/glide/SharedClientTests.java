@@ -5,6 +5,8 @@ import static glide.TestUtilities.commonClientConfig;
 import static glide.TestUtilities.commonClusterClientConfig;
 import static glide.TestUtilities.getRandomString;
 import static glide.api.BaseClient.OK;
+import static glide.api.models.commands.FlushMode.SYNC;
+import static glide.api.models.configuration.RequestRoutingConfiguration.SimpleMultiNodeRoute.ALL_PRIMARIES;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import glide.api.BaseClient;
@@ -97,6 +99,7 @@ public class SharedClientTests {
 
     @ParameterizedTest(autoCloseArguments = false)
     @MethodSource("clientAndDataSize")
+    @SneakyThrows
     public void client_can_handle_concurrent_workload(BaseClient client, int valueSize) {
         ExecutorService executorService = Executors.newCachedThreadPool();
         @SuppressWarnings("unchecked")
@@ -121,5 +124,10 @@ public class SharedClientTests {
         CompletableFuture.allOf(futures).join();
 
         executorService.shutdown();
+        if (client instanceof GlideClient) {
+            ((GlideClient) client).flushall(SYNC).get();
+        } else if (client instanceof GlideClusterClient) {
+            ((GlideClusterClient) client).flushall(SYNC, ALL_PRIMARIES).get();
+        }
     }
 }

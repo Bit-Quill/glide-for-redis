@@ -106,7 +106,9 @@ jobs:
 
             - name: bench
               working-directory: java
-              run: ./gradlew :benchmarks:run --args="--resultsFile big_data.json --dataSize 40000000 --concurrentTasks 1 --clients glide --clientCount 1"
+              run: |
+                  redis-server &
+                  ./gradlew :benchmarks:run --args="--resultsFile big_data.json --dataSize 40000000 --concurrentTasks 1 --clients glide --clientCount 1"
 
             - name: Upload test & spotbugs reports
               if: always()

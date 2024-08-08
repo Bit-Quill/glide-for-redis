@@ -61,7 +61,6 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(30) // sec
-@Disabled
 public class PubSubTests {
 
     // TODO protocol version

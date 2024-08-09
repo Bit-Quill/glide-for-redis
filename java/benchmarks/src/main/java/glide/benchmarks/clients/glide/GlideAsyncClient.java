@@ -46,6 +46,7 @@ public class GlideAsyncClient implements AsyncClient<String> {
                                             .host(connectionSettings.host)
                                             .port(connectionSettings.port)
                                             .build())
+                            .requestTimeout(5000)
                             .useTLS(connectionSettings.useSsl)
                             .build();
 

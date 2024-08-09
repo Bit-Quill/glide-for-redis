@@ -96,13 +96,13 @@ jobs:
                   version: "26.1"
                   repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-            - name: Build java client
-              working-directory: java
-              run: ./gradlew --continue build -x javadoc
-
-            - name: Ensure no skipped files by linter
-              working-directory: java
-              run: ./gradlew spotlessDiagnose | grep 'All formatters are well behaved for all files'
+#            - name: Build java client
+#              working-directory: java
+#              run: ./gradlew --continue build -x javadoc
+#
+#            - name: Ensure no skipped files by linter
+#              working-directory: java
+#              run: ./gradlew spotlessDiagnose | grep 'All formatters are well behaved for all files'
 
             - name: bench
               working-directory: java

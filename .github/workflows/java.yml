@@ -96,19 +96,13 @@ jobs:
                   version: "26.1"
                   repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-#            - name: Build java client
-#              working-directory: java
-#              run: ./gradlew --continue build -x javadoc
-#
-#            - name: Ensure no skipped files by linter
-#              working-directory: java
-#              run: ./gradlew spotlessDiagnose | grep 'All formatters are well behaved for all files'
-
-            - name: bench
+            - name: Build java client
               working-directory: java
-              run: |
-                  redis-server &
-                  ./gradlew :benchmarks:run --args="--resultsFile big_data.json --dataSize 40000000 --concurrentTasks 1 --clients glide --clientCount 1"
+              run: ./gradlew --continue build -x javadoc
+
+            - name: Ensure no skipped files by linter
+              working-directory: java
+              run: ./gradlew spotlessDiagnose | grep 'All formatters are well behaved for all files'
 
             - name: Upload test & spotbugs reports
               if: always()
